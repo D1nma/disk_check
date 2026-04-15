@@ -9,6 +9,7 @@ set -u -o pipefail
 readonly DEFAULT_REPORT_DIR="${HOME}/disk-reports"
 readonly DEFAULT_TOP_COUNT=15
 readonly DEFAULT_TOP_FILES_COUNT=20
+readonly DEFAULT_TREE_DEPTH=3
 readonly DEFAULT_MAX_DEPTH=-1  # -1 = illimité
 readonly MAX_ALLOWED_DEPTH=1024
 readonly MAX_ALLOWED_RESULTS=10000
@@ -27,6 +28,7 @@ readonly HEAVY_KNOWN_PATTERNS=(
 REPORT_DIR="$DEFAULT_REPORT_DIR"
 TOP_COUNT="$DEFAULT_TOP_COUNT"
 TOP_FILES_COUNT="$DEFAULT_TOP_FILES_COUNT"
+TREE_DEPTH="$DEFAULT_TREE_DEPTH"
 MAX_DEPTH="$DEFAULT_MAX_DEPTH"
 
 CURRENT_DIR_INPUT="$(pwd)"
@@ -35,7 +37,8 @@ CURRENT_DIR=""
 SORT_MODE="size"          # size | mtime
 FILE_SIZE_MODE="real"     # real | apparent
 ANALYSIS_MODE="partition" # partition | global
-RUN_MODE="interactive"    # interactive | summary | report
+RUN_MODE="interactive"    # interactive | summary | report | tree
+SELF_CHECK_ONLY=0
 
 USE_DEFAULT_EXCLUDES=1
 # Conforme no-color.org : toute variable NO_COLOR définie (même vide) désactive les couleurs.
@@ -82,6 +85,9 @@ Options:
                             Maximum accepté : 1024
   --report                  Génère un rapport texte puis quitte
   --summary                 Affiche un résumé puis quitte
+  --tree                    Affiche une vue arborescente type TreeSize puis quitte
+  --tree-depth N            Profondeur max de la vue arborescente (--tree)
+  --self-check              Vérifie la compatibilité runtime puis quitte
   --interactive             Force le mode interactif (si TTY disponible)
   --report-dir DIR          Dossier de sortie des rapports
   --exclude PATH            Ajoute une exclusion (répétable)
@@ -128,14 +134,101 @@ contains_glob_meta() {
   [[ "$1" == *[\*\?\[\]]* ]]
 }
 
+detect_os_id() {
+  local os_id="linux"
+  if [[ -r /etc/os-release ]]; then
+    # Lecture défensive (sans "source") : on ne veut ni effets de bord
+    # sur l'environnement shell, ni exécution de contenu externe.
+    local line
+    while IFS= read -r line; do
+      case "$line" in
+        ID=*)
+          os_id="${line#ID=}"
+          os_id="${os_id%\"}"
+          os_id="${os_id#\"}"
+          break
+          ;;
+      esac
+    done < /etc/os-release
+  fi
+  printf '%s\n' "$os_id"
+}
+
+install_hint() {
+  local os_id="$1"
+  shift
+  local -a missing_cmds=("$@")
+  local cmd pkg
+  # Déduplication pour éviter des commandes d'installation verbeuses
+  # quand plusieurs binaires proviennent du même paquet.
+  local -A pkg_seen=()
+  local -a pkgs=()
+
+  for cmd in "${missing_cmds[@]}"; do
+    case "$cmd" in
+      awk) pkg="gawk" ;;
+      find) pkg="findutils" ;;
+      sort|head|du|date|mktemp|df|tail) pkg="coreutils" ;;
+      *) pkg="$cmd" ;;
+    esac
+    if [[ -z "${pkg_seen[$pkg]+x}" ]]; then
+      pkg_seen[$pkg]=1
+      pkgs+=("$pkg")
+    fi
+  done
+
+  local pkg_list
+  printf -v pkg_list '%s ' "${pkgs[@]}"
+  pkg_list="${pkg_list% }"
+
+  case "$os_id" in
+    debian|ubuntu|linuxmint|pop|kali|raspbian)
+      printf 'sudo apt-get update && sudo apt-get install -y %s\n' "$pkg_list"
+      ;;
+    fedora|rhel|centos|rocky|almalinux)
+      printf 'sudo dnf install -y %s\n' "$pkg_list"
+      ;;
+    opensuse*|sles)
+      printf 'sudo zypper install -y %s\n' "$pkg_list"
+      ;;
+    arch|manjaro)
+      printf 'sudo pacman -S --needed %s\n' "$pkg_list"
+      ;;
+    alpine)
+      printf 'sudo apk add %s\n' "$pkg_list"
+      ;;
+    *)
+      printf 'Installez les paquets suivants via votre gestionnaire de paquets: %s\n' "$pkg_list"
+      ;;
+  esac
+}
+
 init_numfmt_support() {
   command -v numfmt >/dev/null 2>&1 && HAVE_NUMFMT=1 || HAVE_NUMFMT=0
 }
 
 check_runtime_requirements() {
+  # Ce script est explicitement GNU/Linux-only (GNU findutils/coreutils).
+  [[ "${OSTYPE:-}" == linux* ]] || die "GNU/Linux requis (OSTYPE détecté: ${OSTYPE:-inconnu})"
   (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 3) )) || die "Bash >= 4.3 requis"
 
-  command -v awk >/dev/null 2>&1 || die "awk requis"
+  local required_cmd
+  local -a required_cmds=(awk find sort head du date mktemp df tail)
+  local -a missing_cmds=()
+  for required_cmd in "${required_cmds[@]}"; do
+    command -v "$required_cmd" >/dev/null 2>&1 || missing_cmds+=("$required_cmd")
+  done
+
+  if ((${#missing_cmds[@]} > 0)); then
+    local os_id missing
+    os_id="$(detect_os_id)"
+    printf -v missing '%s ' "${missing_cmds[@]}"
+    missing="${missing% }"
+    # Sortie volontairement explicite pour réduire le temps de diagnostic.
+    echo "Erreur: commandes manquantes: $missing" >&2
+    echo "Suggestion d'installation ($os_id): $(install_hint "$os_id" "${missing_cmds[@]}")" >&2
+    exit 1
+  fi
 
   local req_dir
   req_dir=$(mktemp -d /tmp/disk-explorer.req.XXXXXX) || die "impossible de vérifier les prérequis runtime"
@@ -145,6 +238,93 @@ check_runtime_requirements() {
   du -0 --max-depth=0 "$req_dir" >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU du avec -0 requis"; }
   date -d '@0' '+%Y-%m-%d %H:%M' >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU date avec -d requis"; }
   rm -rf -- "$req_dir"
+}
+
+self_check_report() {
+  local -i rc=0
+  local required_cmd
+  local -a required_cmds=(awk find sort head du date mktemp df tail)
+  local -a missing_cmds=()
+
+  echo "=== DISK EXPLORER :: SELF-CHECK ==="
+
+  if [[ "${OSTYPE:-}" == linux* ]]; then
+    echo "[OK] Plateforme Linux détectée (${OSTYPE:-unknown})"
+  else
+    echo "[KO] Plateforme non supportée (${OSTYPE:-unknown})"
+    rc=1
+  fi
+
+  if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 3) )); then
+    echo "[OK] Bash >= 4.3 (${BASH_VERSION})"
+  else
+    echo "[KO] Bash >= 4.3 requis (actuel: ${BASH_VERSION})"
+    rc=1
+  fi
+
+  for required_cmd in "${required_cmds[@]}"; do
+    if command -v "$required_cmd" >/dev/null 2>&1; then
+      echo "[OK] Commande présente: $required_cmd"
+    else
+      echo "[KO] Commande manquante: $required_cmd"
+      missing_cmds+=("$required_cmd")
+      rc=1
+    fi
+  done
+
+  if ((${#missing_cmds[@]} > 0)); then
+    local os_id
+    os_id="$(detect_os_id)"
+    echo "Suggestion d'installation ($os_id): $(install_hint "$os_id" "${missing_cmds[@]}")"
+    echo "[INFO] Tests des fonctionnalités GNU ignorés (dépendances manquantes)."
+  else
+    local req_dir
+    req_dir=$(mktemp -d /tmp/disk-explorer.selfcheck.XXXXXX) || {
+      echo "[KO] impossible de créer un répertoire temporaire pour les tests GNU"
+      return 1
+    }
+
+    if find "$req_dir" -maxdepth 0 -printf '' >/dev/null 2>&1; then
+      echo "[OK] GNU find: support -printf"
+    else
+      echo "[KO] GNU find: -printf non supporté"
+      rc=1
+    fi
+    if printf '%b' 'a\0' | sort -z >/dev/null 2>&1; then
+      echo "[OK] GNU sort: support -z"
+    else
+      echo "[KO] GNU sort: -z non supporté"
+      rc=1
+    fi
+    if printf '%b' 'a\0' | head -z -n 1 >/dev/null 2>&1; then
+      echo "[OK] GNU head: support -z"
+    else
+      echo "[KO] GNU head: -z non supporté"
+      rc=1
+    fi
+    if du -0 --max-depth=0 "$req_dir" >/dev/null 2>&1; then
+      echo "[OK] GNU du: support -0"
+    else
+      echo "[KO] GNU du: -0 non supporté"
+      rc=1
+    fi
+    if date -d '@0' '+%Y-%m-%d %H:%M' >/dev/null 2>&1; then
+      echo "[OK] GNU date: support -d"
+    else
+      echo "[KO] GNU date: -d non supporté"
+      rc=1
+    fi
+
+    rm -rf -- "$req_dir"
+  fi
+
+  if [[ "$HAVE_NUMFMT" -eq 1 ]]; then
+    echo "[OK] numfmt détecté (format humain précis activé)"
+  else
+    echo "[INFO] numfmt non détecté (fallback interne activé)"
+  fi
+
+  return "$rc"
 }
 
 human_size() {
@@ -438,6 +618,19 @@ parse_args() {
       --summary)
         RUN_MODE="summary"
         ;;
+      --tree)
+        RUN_MODE="tree"
+        ;;
+      --tree-depth)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --tree-depth"
+        is_non_negative_int "$1" || die "--tree-depth doit être un entier >= 0"
+        (( "$1" <= MAX_ALLOWED_DEPTH )) || die "--tree-depth doit être <= ${MAX_ALLOWED_DEPTH}"
+        TREE_DEPTH="$1"
+        ;;
+      --self-check)
+        SELF_CHECK_ONLY=1
+        ;;
       --interactive)
         RUN_MODE="interactive"
         ;;
@@ -561,6 +754,21 @@ build_du_cmd() {
   refresh_active_exclusions
 
   out_arr=(du -P -0 -B1 --max-depth=1)
+  [[ "$ANALYSIS_MODE" == "partition" ]] && out_arr+=(-x)
+
+  local d
+  for d in "${ACTIVE_EXCLUDED_DIRS[@]}"; do
+    out_arr+=(--exclude="$d")
+  done
+
+  out_arr+=(-- "$CURRENT_DIR")
+}
+
+build_du_tree_cmd() {
+  local -n out_arr="$1"
+  refresh_active_exclusions
+
+  out_arr=(du -P -0 -B1 --max-depth="$TREE_DEPTH")
   [[ "$ANALYSIS_MODE" == "partition" ]] && out_arr+=(-x)
 
   local d
@@ -1301,12 +1509,120 @@ print_summary() {
   rm -f -- "$tmp_sub" "$err_sub" "$warn_sub" "$tmp_files" "$err_files" "$warn_files"
 }
 
+print_tree_view() {
+  LAST_WARNING=""
+
+  local tmp_file err_file
+  tmp_file=$(make_temp_file) || return 1
+  err_file=$(make_temp_file) || return 1
+  : > "$tmp_file"
+  : > "$err_file"
+
+  local -a du_cmd
+  build_du_tree_cmd du_cmd
+
+  "${du_cmd[@]}" >"$tmp_file" 2>"$err_file"
+
+  local job_rc=$?
+  update_scan_warning "$err_file" "Vue arborescente partielle possible" "$job_rc"
+  [[ -n "$SCAN_WARNING" ]] && echo "Avertissement: $SCAN_WARNING"
+
+  echo "TREE SIZE VIEW (depth=${TREE_DEPTH}) - $CURRENT_DIR"
+
+  declare -A tree_size_map=()
+  declare -A tree_children_map=()
+
+  local line raw_size full_path parent
+  while IFS= read -r -d '' line; do
+    raw_size="${line%%$'\t'*}"
+    full_path="${line#*$'\t'}"
+    [[ -z "$full_path" || "$full_path" == "$line" ]] && continue
+
+    tree_size_map["$full_path"]="$raw_size"
+
+    if [[ "$full_path" != "$CURRENT_DIR" ]]; then
+      parent="$(dirname -- "$full_path")"
+      if path_is_equal_or_within "$parent" "$CURRENT_DIR"; then
+        tree_children_map["$parent"]+="$full_path"$'\n'
+      fi
+    fi
+  done < "$tmp_file"
+
+  if [[ -z "${tree_size_map["$CURRENT_DIR"]+x}" ]]; then
+    echo "Aucune donnée d'arborescence disponible."
+    rm -f -- "$tmp_file" "$err_file"
+    return 0
+  fi
+
+  tree_percent_str() {
+    local child_size="$1"
+    local parent_size="$2"
+    local pct10=0
+    if (( parent_size > 0 )); then
+      pct10=$(( child_size * 1000 / parent_size ))
+    fi
+    printf '%d.%d%%' "$((pct10 / 10))" "$((pct10 % 10))"
+  }
+
+  tree_print_node() {
+    local node="$1"
+    local depth="$2"
+    local parent_size="$3"
+    local node_size="${tree_size_map[$node]}"
+    local rel indent pct
+
+    if [[ "$node" == "$CURRENT_DIR" ]]; then
+      rel="."
+      pct="100.0%"
+    else
+      rel="${node#"${CURRENT_DIR}/"}"
+      pct="$(tree_percent_str "$node_size" "$parent_size")"
+    fi
+
+    if (( depth > 0 )); then
+      printf -v indent '%*s' $(( (depth - 1) * 2 )) ''
+      printf '%12s  %7s  %s├── %s\n' "$(human_size "$node_size")" "$pct" "$indent" "$(sanitize_for_display "$rel")"
+    else
+      printf '%12s  %7s  %s\n' "$(human_size "$node_size")" "$pct" "$(sanitize_for_display "$rel")"
+    fi
+
+    local children_raw child
+    children_raw="${tree_children_map[$node]-}"
+    [[ -z "$children_raw" ]] && return 0
+
+    local -a sorted_children=()
+    mapfile -d '' -t sorted_children < <(
+      while IFS= read -r child; do
+        [[ -z "$child" ]] && continue
+        printf '%s\t%s\0' "${tree_size_map[$child]}" "$child"
+      done <<< "$children_raw" | LC_ALL=C sort -zrn | awk -v RS='\0' -v ORS='\0' -F '\t' '{sub(/^[^\t]*\t/, "", $0); print $0}'
+    )
+
+    local next_child
+    for next_child in "${sorted_children[@]}"; do
+      tree_print_node "$next_child" "$((depth + 1))" "$node_size"
+    done
+  }
+
+  tree_print_node "$CURRENT_DIR" 0 "${tree_size_map[$CURRENT_DIR]}"
+
+  rm -f -- "$tmp_file" "$err_file"
+}
+
 # ================== MAIN ==================
 
 main() {
   parse_args "$@"
-  check_runtime_requirements
   init_numfmt_support
+
+  if [[ "$SELF_CHECK_ONLY" -eq 1 ]]; then
+    # Mode preflight: ne touche ni au scan ni à la navigation interactive.
+    self_check_report
+    return $?
+  fi
+
+  check_runtime_requirements
+
   prepare_current_dir
   prepare_exclusions
   init_temp_root
@@ -1337,6 +1653,13 @@ main() {
       echo "$LAST_WARNING"
       if (( PARTIAL_SCAN_DETECTED != 0 )); then
         return 2
+      fi
+      return 0
+      ;;
+    tree)
+      print_tree_view || run_rc=$?
+      if (( run_rc != 0 )); then
+        return "$run_rc"
       fi
       return 0
       ;;

@@ -24,7 +24,6 @@ Dépendances principales :
 - `du`
 - `sort`
 - `head`
-- `stat`
 - `df`
 - `date`
 - `realpath` ou fallback lexical interne
@@ -33,6 +32,7 @@ Dépendances principales :
 ## Installation
 
 ```bash
+# Déjà exécutable dans ce dépôt ; sinon :
 chmod +x ./disk-explorer.sh
 ```
 
@@ -42,6 +42,8 @@ chmod +x ./disk-explorer.sh
 ./disk-explorer.sh
 ./disk-explorer.sh /var
 ./disk-explorer.sh --summary /home
+./disk-explorer.sh --self-check
+./disk-explorer.sh --tree --tree-depth 3 /home
 ./disk-explorer.sh --report --report-dir /tmp/reports /srv
 ./disk-explorer.sh --mode global --sort mtime --top-count 20 --top-files 30 /data
 ```
@@ -59,6 +61,9 @@ chmod +x ./disk-explorer.sh
 --exclude DIR
 --no-default-excludes
 --summary
+--tree
+--tree-depth N
+--self-check
 --report
 --report-dir DIR
 --no-color
@@ -73,14 +78,16 @@ chmod +x ./disk-explorer.sh
 - Les exclusions utilisateur sont traitées de manière littérale.
 - Le rapport est d’abord écrit dans un fichier temporaire puis déplacé de manière atomique.
 - Le script est pensé pour GNU/Linux. Il ne vise pas une compatibilité BSD/macOS complète.
+- En cas de dépendance manquante, le script affiche désormais une suggestion d'installation adaptée à la distribution (si détectée).
+- `--self-check` affiche maintenant un diagnostic détaillé (plateforme, Bash, commandes requises, support GNU, état `numfmt`).
+- `--tree` fournit une vue arborescente des tailles (style TreeSize CLI), avec tri des enfants par taille et `% du parent`, limitée par `--tree-depth`.
 
 ## Structure du dépôt
 
 ```text
 .
 ├── disk-explorer.sh
-├── README.md
-└── .gitignore
+└── README.md
 ```
 
 ## Conseils d’exploitation
