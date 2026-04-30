@@ -449,7 +449,7 @@ init_runtime_flags() {
 
 spinner() {
   local pid="$1"
-  local chars='|/-\\'
+  local chars="|/-\\"
   local i=0
 
   while kill -0 "$pid" 2>/dev/null; do
@@ -750,6 +750,7 @@ get_df_fields() {
 }
 
 build_du_cmd() {
+  # shellcheck disable=SC2178
   local -n out_arr="$1"
   refresh_active_exclusions
 
@@ -765,6 +766,7 @@ build_du_cmd() {
 }
 
 build_du_tree_cmd() {
+  # shellcheck disable=SC2178
   local -n out_arr="$1"
   refresh_active_exclusions
 
@@ -780,6 +782,7 @@ build_du_tree_cmd() {
 }
 
 build_find_prefix() {
+  # shellcheck disable=SC2178
   local -n out_arr="$1"
   local maxdepth="${2-}"
 
