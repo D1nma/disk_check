@@ -231,7 +231,7 @@ check_runtime_requirements() {
   fi
 
   local req_dir
-  req_dir=$(mktemp -d -t disk-explorer.req.XXXXXX) || die "impossible de vérifier les prérequis runtime"
+  req_dir=$(mktemp -d "${TMPDIR:-/tmp}/disk-explorer.req.XXXXXX") || die "impossible de vérifier les prérequis runtime"
   find "$req_dir" -maxdepth 0 -printf '' >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU find avec -printf requis"; }
   printf '%b' 'a\0' | sort -z >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU sort avec -z requis"; }
   printf '%b' 'a\0' | head -z -n 1 >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU head avec -z requis"; }
