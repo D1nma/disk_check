@@ -279,7 +279,7 @@ self_check_report() {
     echo "[INFO] Tests des fonctionnalités GNU ignorés (dépendances manquantes)."
   else
     local req_dir
-    req_dir=$(mktemp -d -t disk-explorer.selfcheck.XXXXXX) || {
+    req_dir=$(mktemp -d "${TMPDIR:-/tmp}/disk-explorer.selfcheck.XXXXXX") || {
       echo "[KO] impossible de créer un répertoire temporaire pour les tests GNU"
       return 1
     }
