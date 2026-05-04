@@ -231,7 +231,7 @@ check_runtime_requirements() {
   fi
 
   local req_dir
-  req_dir=$(mktemp -d /tmp/disk-explorer.req.XXXXXX) || die "impossible de vérifier les prérequis runtime"
+  req_dir=$(mktemp -d "${TMPDIR:-/tmp}/disk-explorer.req.XXXXXX") || die "impossible de vérifier les prérequis runtime"
   find "$req_dir" -maxdepth 0 -printf '' >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU find avec -printf requis"; }
   printf '%b' 'a\0' | sort -z >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU sort avec -z requis"; }
   printf '%b' 'a\0' | head -z -n 1 >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU head avec -z requis"; }
@@ -279,7 +279,7 @@ self_check_report() {
     echo "[INFO] Tests des fonctionnalités GNU ignorés (dépendances manquantes)."
   else
     local req_dir
-    req_dir=$(mktemp -d /tmp/disk-explorer.selfcheck.XXXXXX) || {
+    req_dir=$(mktemp -d "${TMPDIR:-/tmp}/disk-explorer.selfcheck.XXXXXX") || {
       echo "[KO] impossible de créer un répertoire temporaire pour les tests GNU"
       return 1
     }
@@ -399,7 +399,7 @@ resolve_path_lexical() {
 }
 
 init_temp_root() {
-  TEMP_ROOT="$(mktemp -d /tmp/disk-explorer.XXXXXX)" || die "impossible de créer le répertoire temporaire"
+  TEMP_ROOT="$(mktemp -d \"${TMPDIR:-/tmp}/disk-explorer.XXXXXX\")" || die "impossible de créer le répertoire temporaire"
 }
 
 make_temp_file() {
