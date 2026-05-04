@@ -1033,56 +1033,54 @@ remove_exclusion_interactive() {
   EXCLUDED_DIRS=("${EXCLUDED_DIRS[@]}")
 }
 
-set_top_count_interactive() {
-  local value
-  read -r -p "Nouveau top sous-dossiers : " value
-  [[ -z "$value" ]] && return 0
-  is_non_negative_int "$value" || {
+# set_numeric_interactive var_name prompt validation_func min max warning_label [display_func]
+set_numeric_interactive() {
+  # shellcheck disable=SC2178
+  local -n __sni_var_ref="$1"
+  local __sni_prompt="$2"
+  local __sni_val_func="$3"
+  local __sni_min_val="$4"
+  local __sni_max_val="$5"
+  local __sni_label="$6"
+  local __sni_disp_func="${7-}"
+  local __sni_value
+
+  read -r -p "$__sni_prompt" __sni_value
+  [[ -z "$__sni_value" ]] && return 0
+
+  "$__sni_val_func" "$__sni_value" || {
     LAST_WARNING="valeur invalide"
     return 0
   }
-  (( value <= MAX_ALLOWED_RESULTS )) || {
-    LAST_WARNING="la valeur doit être <= ${MAX_ALLOWED_RESULTS}"
+
+  (( __sni_value >= __sni_min_val )) || {
+    LAST_WARNING="la valeur doit être >= $__sni_min_val"
     return 0
   }
-  TOP_COUNT="$value"
-  LAST_WARNING="top sous-dossiers = $TOP_COUNT"
+
+  (( __sni_value <= __sni_max_val )) || {
+    LAST_WARNING="la valeur doit être <= $__sni_max_val"
+    return 0
+  }
+
+  __sni_var_ref="$__sni_value"
+  if [[ -n "$__sni_disp_func" ]]; then
+    LAST_WARNING="$__sni_label = $("$__sni_disp_func")"
+  else
+    LAST_WARNING="$__sni_label = $__sni_var_ref"
+  fi
+}
+
+set_top_count_interactive() {
+  set_numeric_interactive TOP_COUNT "Nouveau top sous-dossiers : " is_non_negative_int 0 "$MAX_ALLOWED_RESULTS" "top sous-dossiers"
 }
 
 set_top_files_interactive() {
-  local value
-  read -r -p "Nouveau top fichiers : " value
-  [[ -z "$value" ]] && return 0
-  is_non_negative_int "$value" || {
-    LAST_WARNING="valeur invalide"
-    return 0
-  }
-  (( value <= MAX_ALLOWED_RESULTS )) || {
-    LAST_WARNING="la valeur doit être <= ${MAX_ALLOWED_RESULTS}"
-    return 0
-  }
-  TOP_FILES_COUNT="$value"
-  LAST_WARNING="top fichiers = $TOP_FILES_COUNT"
+  set_numeric_interactive TOP_FILES_COUNT "Nouveau top fichiers : " is_non_negative_int 0 "$MAX_ALLOWED_RESULTS" "top fichiers"
 }
 
 set_max_depth_interactive() {
-  local value
-  read -r -p "Nouvelle profondeur max (-1 = illimitée) : " value
-  [[ -z "$value" ]] && return 0
-  is_integer "$value" || {
-    LAST_WARNING="valeur invalide"
-    return 0
-  }
-  (( value >= -1 )) || {
-    LAST_WARNING="la profondeur doit être >= -1"
-    return 0
-  }
-  (( value <= MAX_ALLOWED_DEPTH )) || {
-    LAST_WARNING="la profondeur doit être <= ${MAX_ALLOWED_DEPTH}"
-    return 0
-  }
-  MAX_DEPTH="$value"
-  LAST_WARNING="profondeur max = $(depth_label)"
+  set_numeric_interactive MAX_DEPTH "Nouvelle profondeur max (-1 = illimitée) : " is_integer -1 "$MAX_ALLOWED_DEPTH" "profondeur max" depth_label
 }
 
 config_menu() {
