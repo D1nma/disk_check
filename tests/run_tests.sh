@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Source the script to get access to functions
-source "$(dirname "${BASH_SOURCE[0]}")/../disk-explorer.sh"
+source "$(dirname "$0")/../disk-explorer.sh"
 
 failed=0
 total=0

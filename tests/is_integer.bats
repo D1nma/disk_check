@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 
 setup() {
-    source ./disk-explorer.sh
+    source "${BATS_TEST_DIRNAME}/../disk-explorer.sh"
 }
 
 @test "is_integer: positive integer" {
