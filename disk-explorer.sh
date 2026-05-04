@@ -1036,38 +1036,38 @@ remove_exclusion_interactive() {
 # set_numeric_interactive var_name prompt validation_func min max warning_label [display_func]
 set_numeric_interactive() {
   # shellcheck disable=SC2178
-  local -n var_ref="$1"
-  local prompt="$2"
-  local val_func="$3"
-  local min_val="$4"
-  local max_val="$5"
-  local label="$6"
-  local disp_func="${7-}"
-  local value
+  local -n __sni_var_ref="$1"
+  local __sni_prompt="$2"
+  local __sni_val_func="$3"
+  local __sni_min_val="$4"
+  local __sni_max_val="$5"
+  local __sni_label="$6"
+  local __sni_disp_func="${7-}"
+  local __sni_value
 
-  read -r -p "$prompt" value
-  [[ -z "$value" ]] && return 0
+  read -r -p "$__sni_prompt" __sni_value
+  [[ -z "$__sni_value" ]] && return 0
 
-  "$val_func" "$value" || {
+  "$__sni_val_func" "$__sni_value" || {
     LAST_WARNING="valeur invalide"
     return 0
   }
 
-  (( value >= min_val )) || {
-    LAST_WARNING="la valeur doit être >= $min_val"
+  (( __sni_value >= __sni_min_val )) || {
+    LAST_WARNING="la valeur doit être >= $__sni_min_val"
     return 0
   }
 
-  (( value <= max_val )) || {
-    LAST_WARNING="la valeur doit être <= $max_val"
+  (( __sni_value <= __sni_max_val )) || {
+    LAST_WARNING="la valeur doit être <= $__sni_max_val"
     return 0
   }
 
-  var_ref="$value"
-  if [[ -n "$disp_func" ]]; then
-    LAST_WARNING="$label = $("$disp_func")"
+  __sni_var_ref="$__sni_value"
+  if [[ -n "$__sni_disp_func" ]]; then
+    LAST_WARNING="$__sni_label = $("$__sni_disp_func")"
   else
-    LAST_WARNING="$label = $var_ref"
+    LAST_WARNING="$__sni_label = $__sni_var_ref"
   fi
 }
 
