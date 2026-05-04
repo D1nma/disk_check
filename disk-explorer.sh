@@ -1033,56 +1033,54 @@ remove_exclusion_interactive() {
   EXCLUDED_DIRS=("${EXCLUDED_DIRS[@]}")
 }
 
-set_top_count_interactive() {
+# set_numeric_interactive var_name prompt validation_func min max warning_label [display_func]
+set_numeric_interactive() {
+  # shellcheck disable=SC2178
+  local -n var_ref="$1"
+  local prompt="$2"
+  local val_func="$3"
+  local min_val="$4"
+  local max_val="$5"
+  local label="$6"
+  local disp_func="${7-}"
   local value
-  read -r -p "Nouveau top sous-dossiers : " value
+
+  read -r -p "$prompt" value
   [[ -z "$value" ]] && return 0
-  is_non_negative_int "$value" || {
+
+  "$val_func" "$value" || {
     LAST_WARNING="valeur invalide"
     return 0
   }
-  (( value <= MAX_ALLOWED_RESULTS )) || {
-    LAST_WARNING="la valeur doit être <= ${MAX_ALLOWED_RESULTS}"
+
+  (( value >= min_val )) || {
+    LAST_WARNING="la valeur doit être >= $min_val"
     return 0
   }
-  TOP_COUNT="$value"
-  LAST_WARNING="top sous-dossiers = $TOP_COUNT"
+
+  (( value <= max_val )) || {
+    LAST_WARNING="la valeur doit être <= $max_val"
+    return 0
+  }
+
+  var_ref="$value"
+  if [[ -n "$disp_func" ]]; then
+    LAST_WARNING="$label = $("$disp_func")"
+  else
+    LAST_WARNING="$label = $var_ref"
+  fi
+}
+
+set_top_count_interactive() {
+  set_numeric_interactive TOP_COUNT "Nouveau top sous-dossiers : " is_non_negative_int 0 "$MAX_ALLOWED_RESULTS" "top sous-dossiers"
 }
 
 set_top_files_interactive() {
-  local value
-  read -r -p "Nouveau top fichiers : " value
-  [[ -z "$value" ]] && return 0
-  is_non_negative_int "$value" || {
-    LAST_WARNING="valeur invalide"
-    return 0
-  }
-  (( value <= MAX_ALLOWED_RESULTS )) || {
-    LAST_WARNING="la valeur doit être <= ${MAX_ALLOWED_RESULTS}"
-    return 0
-  }
-  TOP_FILES_COUNT="$value"
-  LAST_WARNING="top fichiers = $TOP_FILES_COUNT"
+  set_numeric_interactive TOP_FILES_COUNT "Nouveau top fichiers : " is_non_negative_int 0 "$MAX_ALLOWED_RESULTS" "top fichiers"
 }
 
 set_max_depth_interactive() {
-  local value
-  read -r -p "Nouvelle profondeur max (-1 = illimitée) : " value
-  [[ -z "$value" ]] && return 0
-  is_integer "$value" || {
-    LAST_WARNING="valeur invalide"
-    return 0
-  }
-  (( value >= -1 )) || {
-    LAST_WARNING="la profondeur doit être >= -1"
-    return 0
-  }
-  (( value <= MAX_ALLOWED_DEPTH )) || {
-    LAST_WARNING="la profondeur doit être <= ${MAX_ALLOWED_DEPTH}"
-    return 0
-  }
-  MAX_DEPTH="$value"
-  LAST_WARNING="profondeur max = $(depth_label)"
+  set_numeric_interactive MAX_DEPTH "Nouvelle profondeur max (-1 = illimitée) : " is_integer -1 "$MAX_ALLOWED_DEPTH" "profondeur max" depth_label
 }
 
 config_menu() {
