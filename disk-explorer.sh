@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
+
+# Shim : garantit Bash >= 4.4 avant toute syntaxe incompatible.
+# Gardé par BASH_SOURCE[0]==$0 pour ne pas re-exec quand le script est sourcé (tests).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 4) )); then
+    _self="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
+    for _bash in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+      [[ -x "$_bash" ]] && exec "$_bash" -- "$_self" "$@"
+    done
+    printf 'Erreur: Bash >= 4.4 requis.\nSur macOS: brew install bash\nPuis relancer: /opt/homebrew/bin/bash %s\n' "${BASH_SOURCE[0]}" >&2
+    exit 1
+  fi
+fi
+
 # =============================================================================
 # DISK EXPLORER - Version prête prod (v3.4.2)
 # =============================================================================
@@ -42,8 +56,8 @@ SELF_CHECK_ONLY=0
 
 USE_DEFAULT_EXCLUDES=1
 # Conforme no-color.org : toute variable NO_COLOR définie (même vide) désactive les couleurs.
-# [[ -v ]] est sûr avec set -u et disponible dès Bash 4.2 (< 4.3 requis ailleurs).
-if [[ -v NO_COLOR ]]; then
+# ${VAR+x} est portable dès Bash 3.x et sûr avec set -u.
+if [[ -n "${NO_COLOR+x}" ]]; then
   NO_COLOR=1
 else
   NO_COLOR=0
@@ -56,6 +70,13 @@ TEMP_ROOT=""
 LAST_WARNING=""
 SCAN_WARNING=""
 PARTIAL_SCAN_DETECTED=0
+
+PLATFORM=""
+FIND_CMD="find"
+SORT_CMD="sort"
+HEAD_CMD="head"
+DU_CMD="du"
+NUMFMT_CMD="numfmt"
 
 declare -a EXTRA_EXCLUDED_DIRS=()
 declare -a EXCLUDED_DIRS=()
