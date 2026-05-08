@@ -1716,6 +1716,10 @@ print_tree_view() {
 
 main() {
   parse_args "$@"
+  detect_platform
+  if [[ "$PLATFORM" == "macos" ]]; then
+    resolve_gnu_tools_macos
+  fi
   init_numfmt_support
 
   if [[ "$SELF_CHECK_ONLY" -eq 1 ]]; then
