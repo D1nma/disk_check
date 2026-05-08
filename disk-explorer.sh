@@ -225,7 +225,7 @@ install_hint() {
 }
 
 init_numfmt_support() {
-  command -v numfmt >/dev/null 2>&1 && HAVE_NUMFMT=1 || HAVE_NUMFMT=0
+  command -v "$NUMFMT_CMD" >/dev/null 2>&1 && HAVE_NUMFMT=1 || HAVE_NUMFMT=0
 }
 
 check_runtime_requirements() {
@@ -253,10 +253,10 @@ check_runtime_requirements() {
 
   local req_dir
   req_dir=$(mktemp -d "${TMPDIR:-/tmp}/disk-explorer.req.XXXXXX") || die "impossible de vérifier les prérequis runtime"
-  find "$req_dir" -maxdepth 0 -printf '' >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU find avec -printf requis"; }
-  printf '%b' 'a\0' | sort -z >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU sort avec -z requis"; }
-  printf '%b' 'a\0' | head -z -n 1 >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU head avec -z requis"; }
-  du -0 --max-depth=0 "$req_dir" >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU du avec -0 requis"; }
+  "$FIND_CMD" "$req_dir" -maxdepth 0 -printf '' >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU find avec -printf requis"; }
+  printf '%b' 'a\0' | "$SORT_CMD" -z >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU sort avec -z requis"; }
+  printf '%b' 'a\0' | "$HEAD_CMD" -z -n 1 >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU head avec -z requis"; }
+  "$DU_CMD" -0 --max-depth=0 "$req_dir" >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU du avec -0 requis"; }
   date -d '@0' '+%Y-%m-%d %H:%M' >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU date avec -d requis"; }
   rm -rf -- "$req_dir"
 }
@@ -305,25 +305,25 @@ self_check_report() {
       return 1
     }
 
-    if find "$req_dir" -maxdepth 0 -printf '' >/dev/null 2>&1; then
+    if "$FIND_CMD" "$req_dir" -maxdepth 0 -printf '' >/dev/null 2>&1; then
       echo "[OK] GNU find: support -printf"
     else
       echo "[KO] GNU find: -printf non supporté"
       rc=1
     fi
-    if printf '%b' 'a\0' | sort -z >/dev/null 2>&1; then
+    if printf '%b' 'a\0' | "$SORT_CMD" -z >/dev/null 2>&1; then
       echo "[OK] GNU sort: support -z"
     else
       echo "[KO] GNU sort: -z non supporté"
       rc=1
     fi
-    if printf '%b' 'a\0' | head -z -n 1 >/dev/null 2>&1; then
+    if printf '%b' 'a\0' | "$HEAD_CMD" -z -n 1 >/dev/null 2>&1; then
       echo "[OK] GNU head: support -z"
     else
       echo "[KO] GNU head: -z non supporté"
       rc=1
     fi
-    if du -0 --max-depth=0 "$req_dir" >/dev/null 2>&1; then
+    if "$DU_CMD" -0 --max-depth=0 "$req_dir" >/dev/null 2>&1; then
       echo "[OK] GNU du: support -0"
     else
       echo "[KO] GNU du: -0 non supporté"
@@ -352,7 +352,7 @@ human_size() {
   local size="$1"
 
   if [[ "$HAVE_NUMFMT" -eq 1 ]]; then
-    numfmt --to=iec-i --suffix=B --format="%.1f" "$size" 2>/dev/null && return 0
+    "$NUMFMT_CMD" --to=iec-i --suffix=B --format="%.1f" "$size" 2>/dev/null && return 0
   fi
 
   # Fallback manuel : une décimale calculée pour rester cohérent avec numfmt.
@@ -856,7 +856,7 @@ build_du_cmd() {
   local -n out_arr="$1"
   refresh_active_exclusions
 
-  out_arr=(du -P -0 -B1 --max-depth=1)
+  out_arr=("$DU_CMD" -P -0 -B1 --max-depth=1)
   [[ "$ANALYSIS_MODE" == "partition" ]] && out_arr+=(-x)
 
   local d
@@ -872,7 +872,7 @@ build_du_tree_cmd() {
   local -n out_arr="$1"
   refresh_active_exclusions
 
-  out_arr=(du -P -0 -B1 --max-depth="$TREE_DEPTH")
+  out_arr=("$DU_CMD" -P -0 -B1 --max-depth="$TREE_DEPTH")
   [[ "$ANALYSIS_MODE" == "partition" ]] && out_arr+=(-x)
 
   local d
@@ -889,7 +889,7 @@ build_find_prefix() {
   local maxdepth="${2-}"
 
   refresh_active_exclusions
-  out_arr=(find -P "$CURRENT_DIR")
+  out_arr=("$FIND_CMD" -P "$CURRENT_DIR")
 
   [[ "$ANALYSIS_MODE" == "partition" ]] && out_arr+=(-xdev)
   [[ -n "$maxdepth" ]] && out_arr+=(-maxdepth "$maxdepth")
@@ -926,8 +926,8 @@ scan_subdirs_to_file() {
 
     (
       "${find_cmd[@]}" -mindepth 1 -type d -printf '%T@\t%p\0' |
-        LC_ALL=C sort -zrn |
-        head -z -n "$TOP_COUNT"
+        LC_ALL=C "$SORT_CMD" -zrn |
+        "$HEAD_CMD" -z -n "$TOP_COUNT"
     ) >"$out_file" 2>"$err_file" &
   else
     local -a du_cmd
@@ -943,8 +943,8 @@ scan_subdirs_to_file() {
             if (path != root) print $0
           }
         ' |
-        LC_ALL=C sort -zrn |
-        head -z -n "$TOP_COUNT"
+        LC_ALL=C "$SORT_CMD" -zrn |
+        "$HEAD_CMD" -z -n "$TOP_COUNT"
     ) >"$out_file" 2>"$err_file" &
   fi
 
@@ -979,14 +979,14 @@ scan_top_files_to_file() {
   if [[ "$FILE_SIZE_MODE" == "apparent" ]]; then
     (
       "${find_cmd[@]}" -type f -printf '%s\t%p\0' |
-        LC_ALL=C sort -zrn |
-        head -z -n "$TOP_FILES_COUNT"
+        LC_ALL=C "$SORT_CMD" -zrn |
+        "$HEAD_CMD" -z -n "$TOP_FILES_COUNT"
     ) >"$out_file" 2>"$err_file" &
   else
     (
       "${find_cmd[@]}" -type f -printf '%b\t%p\0' |
-        LC_ALL=C sort -zrn |
-        head -z -n "$TOP_FILES_COUNT"
+        LC_ALL=C "$SORT_CMD" -zrn |
+        "$HEAD_CMD" -z -n "$TOP_FILES_COUNT"
     ) >"$out_file" 2>"$err_file" &
   fi
 
@@ -1698,7 +1698,7 @@ print_tree_view() {
       while IFS= read -r child; do
         [[ -z "$child" ]] && continue
         printf '%s\t%s\0' "${tree_size_map[$child]}" "$child"
-      done <<< "$children_raw" | LC_ALL=C sort -zrn | awk -v RS='\0' -v ORS='\0' -F '\t' '{sub(/^[^\t]*\t/, "", $0); print $0}'
+      done <<< "$children_raw" | LC_ALL=C "$SORT_CMD" -zrn | awk -v RS='\0' -v ORS='\0' -F '\t' '{sub(/^[^\t]*\t/, "", $0); print $0}'
     )
 
     local next_child
