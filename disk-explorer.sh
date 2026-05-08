@@ -506,6 +506,87 @@ analysis_label() {
   [[ "$ANALYSIS_MODE" == "partition" ]] && echo "MÊME PARTITION" || echo "GLOBAL"
 }
 
+detect_platform() {
+  [[ "$OSTYPE" == darwin* ]] && PLATFORM="macos" || PLATFORM="linux"
+}
+
+resolve_gnu_tools_macos() {
+  local -a missing_tools=()
+  local -a brew_pkgs=()
+
+  _try_gnu_tool() {
+    local var="$1" gnu_name="$2" pkg="$3"
+    if command -v "$gnu_name" >/dev/null 2>&1; then
+      printf -v "$var" '%s' "$gnu_name"
+    elif command -v "${gnu_name#g}" >/dev/null 2>&1 && \
+         "${gnu_name#g}" --version 2>&1 | grep -q GNU; then
+      printf -v "$var" '%s' "${gnu_name#g}"
+    else
+      missing_tools+=("$gnu_name")
+      brew_pkgs+=("$pkg")
+    fi
+  }
+
+  _try_gnu_tool FIND_CMD  gfind   findutils
+  _try_gnu_tool SORT_CMD  gsort   coreutils
+  _try_gnu_tool HEAD_CMD  ghead   coreutils
+  _try_gnu_tool DU_CMD    gdu     coreutils
+  _try_gnu_tool NUMFMT_CMD gnumfmt coreutils
+
+  unset -f _try_gnu_tool
+
+  if (( ${#missing_tools[@]} == 0 )); then
+    return 0
+  fi
+
+  # Dedupliquer les paquets
+  local -A _seen=()
+  local -a unique_pkgs=()
+  local p
+  for p in "${brew_pkgs[@]}"; do
+    if [[ -z "${_seen[$p]+x}" ]]; then
+      _seen[$p]=1
+      unique_pkgs+=("$p")
+    fi
+  done
+
+  local missing_str
+  printf -v missing_str '%s ' "${missing_tools[@]}"
+  missing_str="${missing_str% }"
+
+  if ! command -v brew >/dev/null 2>&1; then
+    printf 'Erreur: outils GNU manquants: %s\n' "$missing_str" >&2
+    printf 'Homebrew requis. Installez-le depuis https://brew.sh puis relancez.\n' >&2
+    exit 1
+  fi
+
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    printf 'Erreur: outils GNU manquants: %s\n' "$missing_str" >&2
+    printf 'Installez-les manuellement: brew install %s\n' "${unique_pkgs[*]}" >&2
+    exit 1
+  fi
+
+  printf 'Outils GNU requis manquants: %s\n' "$missing_str" >&2
+  printf 'Installation via Homebrew: brew install %s\n' "${unique_pkgs[*]}" >&2
+  local answer
+  read -r -p "Installer maintenant ? [o/N] " answer
+  if [[ "${answer,,}" != "o" ]]; then
+    printf 'Installation annulee.\n' >&2
+    exit 1
+  fi
+
+  HOMEBREW_NO_AUTO_UPDATE=1 brew install "${unique_pkgs[@]}" || die "echec de l'installation Homebrew"
+
+  # Re-verifier apres install
+  local tool
+  for tool in "${missing_tools[@]}"; do
+    command -v "$tool" >/dev/null 2>&1 || die "outil toujours manquant apres install: $tool"
+  done
+
+  # Reappel pour fixer les variables CMD
+  resolve_gnu_tools_macos
+}
+
 file_size_label() {
   [[ "$FILE_SIZE_MODE" == "real" ]] && echo "Réel (blocs alloués)" || echo "Apparent (taille logique)"
 }
