@@ -842,12 +842,36 @@ refresh_active_exclusions() {
 # ================== COMMAND BUILDERS ==================
 
 get_df_fields() {
-  local df_out
-  df_out=$(df --output=size,used,avail,pcent,target -B1 -- "$CURRENT_DIR" 2>/dev/null | tail -n 1)
-  [[ -z "$df_out" ]] && return 1
+  local df_out size used avail usep mounted
 
-  local size used avail usep mounted
-  read -r size used avail usep mounted <<< "$df_out"
+  if [[ "$PLATFORM" == "macos" ]]; then
+    # -P (POSIX) empêche le wrapping des longues lignes sur deux lignes.
+    df_out=$(df -Pk -- "$CURRENT_DIR" 2>/dev/null | tail -n 1)
+    [[ -z "$df_out" ]] && return 1
+    # Colonnes : Filesystem 1024-blocs Used Available Capacity [iused ifree %iused] Mounted-on
+    # printf "%d" évite la notation scientifique sur les disques > 1 To.
+    size=$(awk '{printf "%d\n", $2 * 1024}' <<< "$df_out")
+    used=$(awk '{printf "%d\n", $3 * 1024}' <<< "$df_out")
+    avail=$(awk '{printf "%d\n", $4 * 1024}' <<< "$df_out")
+    usep=$(awk '{print $5}' <<< "$df_out")
+    # Le mount point commence après Capacity ($5) ; peut contenir des espaces.
+    # Sur APFS avec colonnes inode, le mount point est le premier champ commençant par "/".
+    # Fallback sur $NF si aucun champ ne commence par "/".
+    mounted=$(awk '{
+      for(i=6;i<=NF;i++){
+        if($i~/^\//){
+          for(j=i;j<=NF;j++) printf "%s%s",$j,(j<NF?" ":"")
+          print ""; exit
+        }
+      }
+      print $NF
+    }' <<< "$df_out")
+  else
+    df_out=$(df --output=size,used,avail,pcent,target -B1 -- "$CURRENT_DIR" 2>/dev/null | tail -n 1)
+    [[ -z "$df_out" ]] && return 1
+    read -r size used avail usep mounted <<< "$df_out"
+  fi
+
   printf '%s %s %s %s %s\n' "$size" "$used" "$avail" "$usep" "$mounted"
 }
 

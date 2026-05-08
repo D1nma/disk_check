@@ -58,3 +58,62 @@ setup() {
     [ "$HEAD_CMD" = "head" ]
     [ "$DU_CMD"   = "du"   ]
 }
+
+# ── get_df_fields (macOS) ─────────────────────────────────────────
+
+# Helper : mock df -Pk avec une sortie donnée.
+# Utilise une variable exportée (_MOCK_DF_OUT) pour que la fonction df()
+# soit accessible dans les sous-shells (command substitution).
+_mock_df_pk() {
+  export _MOCK_DF_OUT="$1"
+  df() { printf '%s\n' "$_MOCK_DF_OUT"; }
+  export -f df
+}
+
+@test "get_df_fields macOS: parse standard 6 colonnes" {
+    PLATFORM="macos"
+    CURRENT_DIR="/"
+    _mock_df_pk "Filesystem 1024-blocks Used Available Capacity Mounted on
+/dev/disk3s1s1 976490568 42949672 933540895 5% /"
+    result=$(get_df_fields)
+    [[ "$result" == *"/"* ]]
+    [[ "$result" == *"5%"* ]]
+    size=$(awk '{print $1}' <<< "$result")
+    (( size > 0 ))
+    unset -f df
+}
+
+@test "get_df_fields macOS: mount point avec espace" {
+    PLATFORM="macos"
+    CURRENT_DIR="/Volumes/My Drive"
+    _mock_df_pk "Filesystem 1024-blocks Used Available Capacity Mounted on
+/dev/disk5s1 976490568 10000000 966490568 2% /Volumes/My Drive"
+    result=$(get_df_fields)
+    [[ "$result" == *"/Volumes/My Drive"* ]]
+    unset -f df
+}
+
+@test "get_df_fields macOS: colonnes APFS avec inode (9 colonnes)" {
+    PLATFORM="macos"
+    CURRENT_DIR="/System/Volumes/Data"
+    _mock_df_pk "Filesystem 1024-blocks Used Available Capacity iused ifree %iused Mounted on
+/dev/disk3s5 976490568 200000000 776490568 21% 1500000 5800000000 0% /System/Volumes/Data"
+    result=$(get_df_fields)
+    [[ "$result" == *"/System/Volumes/Data"* ]]
+    unset -f df
+}
+
+# ── date_from_epoch ───────────────────────────────────────────────
+
+@test "date_from_epoch: epoch 0 sur linux produit une date valide" {
+    PLATFORM="linux"
+    result=$(date_from_epoch "0")
+    [[ "$result" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}$ ]]
+}
+
+@test "date_from_epoch: accepte un timestamp flottant (strip .xxx)" {
+    PLATFORM="linux"
+    result=$(date_from_epoch "1700000000.5")
+    [[ "$result" != "?" ]]
+    [[ "$result" =~ ^[0-9]{4} ]]
+}
