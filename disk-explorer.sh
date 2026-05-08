@@ -605,7 +605,11 @@ is_heavy_known() {
 }
 
 date_from_epoch() {
-  date -d "@${1%.*}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "?"
+  if [[ "$PLATFORM" == "macos" ]]; then
+    date -r "${1%.*}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "?"
+  else
+    date -d "@${1%.*}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "?"
+  fi
 }
 
 update_scan_warning() {
