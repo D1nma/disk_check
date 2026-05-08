@@ -382,7 +382,7 @@ resolve_path_lexical() {
     input="${CURRENT_DIR%/}/$input"
   fi
 
-  if command -v realpath >/dev/null 2>&1; then
+  if realpath -m -- / >/dev/null 2>&1; then
     realpath -m -- "$input"
     return
   fi
