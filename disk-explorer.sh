@@ -13,9 +13,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   fi
 fi
 
-# =============================================================================
-# DISK EXPLORER - Version prête prod (v3.4.2)
-# =============================================================================
+# === MODULE: main ===
 
 set -u -o pipefail
 
@@ -82,53 +80,21 @@ declare -a EXTRA_EXCLUDED_DIRS=()
 declare -a EXCLUDED_DIRS=()
 declare -a ACTIVE_EXCLUDED_DIRS=()
 declare -a SUBDIR_PATHS=()
+declare -a SUBDIR_DATA=()   # données brutes parallèles à SUBDIR_PATHS
+TUI_CAPABLE=0
+_NEEDS_REDRAW=0
+CURSOR=0
+SCROLL_OFFSET=0
 
 RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' DIM='' NC=''
 
-# ================== OUTILS GÉNÉRAUX ==================
+# ================== TRAPS ==================
+trap cleanup EXIT
+trap on_interrupt INT TERM
 
-usage() {
-  cat <<'EOF2'
-Usage:
-  disk-explorer.sh [OPTIONS] [PATH]
 
-Options:
-  --path DIR                Dossier de départ
-  --mode MODE               partition | global
-  --sort MODE               size | mtime
-  --file-size MODE          real | apparent
-  --top-count N             Nombre de sous-dossiers affichés
-  --top-files N             Nombre de fichiers affichés
-  --max-depth N             Profondeur max du scan récursif des fichiers
-                            (0 = seulement le dossier courant, 1 = + sous-dossiers directs…)
-                            (-1 = illimité)
-                            Note : s'applique aux fichiers, pas à la vue sous-dossiers.
-                            Maximum accepté : 1024
-  --report                  Génère un rapport texte puis quitte
-  --summary                 Affiche un résumé puis quitte
-  --tree                    Affiche une vue arborescente type TreeSize puis quitte
-  --tree-depth N            Profondeur max de la vue arborescente (--tree)
-  --self-check              Vérifie la compatibilité runtime puis quitte
-  --interactive             Force le mode interactif (si TTY disponible)
-  --report-dir DIR          Dossier de sortie des rapports
-  --exclude PATH            Ajoute une exclusion (répétable)
-  --no-default-excludes     N'utilise pas les exclusions par défaut
-  --no-color                Désactive les couleurs
-  --no-spinner              Désactive le spinner
-  -h, --help                Aide
-
-Remarques:
-  - Le mode PARTITION/CENTREON reste sur le même filesystem.
-  - Le tri mtime des sous-dossiers repose sur la date du dossier lui-même,
-    pas sur l'activité récursive de tout son contenu.
-  - Le mode real/apparent concerne les fichiers ; la vue sous-dossiers repose
-    toujours sur l'occupation disque remontée par du.
-  - Ce script supporte GNU/Linux et macOS (GNU findutils, coreutils et Bash >= 4.4).
-  - Sur macOS, les outils GNU sont installés automatiquement via Homebrew si nécessaire.
-  - Les exclusions utilisateur sont traitées comme des chemins littéraux :
-    les métacaractères de glob (* ? [ ]) sont refusés.
-EOF2
-}
+# === MODULE: utils ===
+# Utilitaires purs
 
 die() {
   echo "Erreur: $*" >&2
@@ -225,47 +191,438 @@ install_hint() {
   esac
 }
 
-init_numfmt_support() {
-  command -v "$NUMFMT_CMD" >/dev/null 2>&1 && HAVE_NUMFMT=1 || HAVE_NUMFMT=0
-}
+human_size() {
+  local size="$1"
 
-check_runtime_requirements() {
-  (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )) || die "Bash >= 4.4 requis"
-
-  local required_cmd
-  # numfmt est optionnel : human_size() utilise un fallback awk si absent (voir HAVE_NUMFMT).
-  local -a required_cmds=(awk "$FIND_CMD" "$SORT_CMD" "$HEAD_CMD" "$DU_CMD" date mktemp df tail)
-  local -a missing_cmds=()
-  for required_cmd in "${required_cmds[@]}"; do
-    command -v "$required_cmd" >/dev/null 2>&1 || missing_cmds+=("$required_cmd")
-  done
-
-  if ((${#missing_cmds[@]} > 0)); then
-    local os_id missing
-    os_id="$(detect_os_id)"
-    printf -v missing '%s ' "${missing_cmds[@]}"
-    missing="${missing% }"
-    # Sortie volontairement explicite pour réduire le temps de diagnostic.
-    echo "Erreur: commandes manquantes: $missing" >&2
-    echo "Suggestion d'installation ($os_id): $(install_hint "$os_id" "${missing_cmds[@]}")" >&2
-    exit 1
+  if [[ "$HAVE_NUMFMT" -eq 1 ]]; then
+    "$NUMFMT_CMD" --to=iec-i --suffix=B --format="%.1f" "$size" 2>/dev/null && return 0
   fi
 
-  local req_dir
-  req_dir=$(mktemp -d "${TMPDIR:-/tmp}/disk-explorer.req.XXXXXX") || die "impossible de vérifier les prérequis runtime"
-  "$FIND_CMD" "$req_dir" -maxdepth 0 -printf '' >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU find avec -printf requis"; }
-  printf '%b' 'a\0' | "$SORT_CMD" -z >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU sort avec -z requis"; }
-  printf '%b' 'a\0' | "$HEAD_CMD" -z -n 1 >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU head avec -z requis"; }
-  "$DU_CMD" -0 --max-depth=0 "$req_dir" >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU du avec -0 requis"; }
-  {
-    if [[ "$PLATFORM" == "macos" ]]; then
-      date -r 0 '+%Y-%m-%d %H:%M' >/dev/null 2>&1
-    else
-      date -d '@0' '+%Y-%m-%d %H:%M' >/dev/null 2>&1
-    fi
-  } || { rm -rf -- "$req_dir"; die "date: support epoch non disponible"; }
-  rm -rf -- "$req_dir"
+  # Fallback manuel : une décimale calculée pour rester cohérent avec numfmt.
+  local i=0 rem=0
+  local -a units=("B" "KiB" "MiB" "GiB" "TiB" "PiB" "EiB" "ZiB" "YiB")
+  while (( size >= 1024 && i < ${#units[@]} - 1 )); do
+    rem=$(( size % 1024 ))
+    size=$(( size / 1024 ))
+    (( i++ ))
+  done
+  if (( i > 0 )); then
+    printf '%d.%d%s\n' "$size" "$(( rem * 10 / 1024 ))" "${units[i]}"
+  else
+    printf '%d%s\n' "$size" "${units[i]}"
+  fi
 }
+
+path_is_equal_or_within() {
+  local path="$1"
+  local base="$2"
+
+  if [[ "$base" == "/" ]]; then
+    [[ "$path" == /* ]]
+    return
+  fi
+
+  [[ "$path" == "$base" || "$path" == "$base"/* ]]
+}
+
+analysis_label() {
+  [[ "$ANALYSIS_MODE" == "partition" ]] && echo "MÊME PARTITION" || echo "GLOBAL"
+}
+
+detect_platform() {
+  [[ "$OSTYPE" == darwin* ]] && PLATFORM="macos" || PLATFORM="linux"
+}
+
+file_size_label() {
+  [[ "$FILE_SIZE_MODE" == "real" ]] && echo "Réel (blocs alloués)" || echo "Apparent (taille logique)"
+}
+
+depth_label() {
+  (( MAX_DEPTH >= 0 )) && echo "$MAX_DEPTH" || echo "illimitée"
+}
+
+is_heavy_known() {
+  local name="$1"
+  local pat
+  for pat in "${HEAVY_KNOWN_PATTERNS[@]}"; do
+    [[ "$name" == *"$pat"* ]] && return 0
+  done
+  return 1
+}
+
+date_from_epoch() {
+  if [[ "$PLATFORM" == "macos" ]]; then
+    date -r "${1%.*}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "?"
+  else
+    date -d "@${1%.*}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "?"
+  fi
+}
+
+# === MODULE: scan ===
+# Scan disque, fichiers temporaires, exclusions
+
+normalize_dir() {
+  local input="$1"
+  (cd -- "$input" 2>/dev/null && pwd -P)
+}
+
+resolve_path_lexical() {
+  local input="$1"
+
+  if [[ "$input" != /* ]]; then
+    input="${CURRENT_DIR%/}/$input"
+  fi
+
+  if realpath -m -- / >/dev/null 2>&1; then
+    realpath -m -- "$input"
+    return
+  fi
+
+  local path="$input"
+  local IFS='/'
+  local -a parts stack=()
+  read -r -a parts <<< "${path#/}"
+
+  local part idx joined
+  for part in "${parts[@]}"; do
+    case "$part" in
+      ''|.)
+        continue
+        ;;
+      ..)
+        if ((${#stack[@]} > 0)); then
+          idx=$((${#stack[@]} - 1))
+          unset "stack[$idx]"
+          stack=("${stack[@]}")
+        fi
+        ;;
+      *)
+        stack+=("$part")
+        ;;
+    esac
+  done
+
+  if ((${#stack[@]} == 0)); then
+    printf '/\n'
+  else
+    printf -v joined '%s/' "${stack[@]}"
+    printf '/%s\n' "${joined%/}"
+  fi
+}
+
+init_temp_root() {
+  TEMP_ROOT="$(mktemp -d \"${TMPDIR:-/tmp}/disk-explorer.XXXXXX\")" || die "impossible de créer le répertoire temporaire"
+}
+
+make_temp_file() {
+  [[ -n "$TEMP_ROOT" && -d "$TEMP_ROOT" ]] || init_temp_root
+  mktemp "$TEMP_ROOT/tmp.XXXXXX"
+}
+
+cleanup() {
+  [[ -n "$TEMP_ROOT" && -d "$TEMP_ROOT" ]] && rm -rf -- "$TEMP_ROOT"
+}
+
+on_interrupt() {
+  # Le trap EXIT appellera cleanup() automatiquement après exit.
+  printf '\n' >&2
+  exit 130
+}
+
+spinner() {
+  local pid="$1"
+  local chars="|/-\\"
+  local i=0
+
+  while kill -0 "$pid" 2>/dev/null; do
+    printf ' [%s]\r' "${chars:i:1}" >&2
+    i=$(((i + 1) % 4))
+    sleep 0.1
+  done
+  # Effacement propre de la ligne de spinner.
+  printf '\r\033[K' >&2
+}
+
+wait_for_job() {
+  local pid="$1"
+  if [[ "$ENABLE_SPINNER" -eq 1 ]]; then
+    spinner "$pid"
+  fi
+  wait "$pid"
+}
+
+set_current_dir() {
+  local target="$1"
+  local normalized
+
+  normalized="$(normalize_dir "$target")" || return 1
+  CURRENT_DIR="$normalized"
+  refresh_active_exclusions
+}
+
+prepare_current_dir() {
+  set_current_dir "$CURRENT_DIR_INPUT" || die "le dossier '$CURRENT_DIR_INPUT' n'existe pas ou n'est pas accessible"
+}
+
+prepare_exclusions() {
+  EXCLUDED_DIRS=()
+
+  if [[ "$USE_DEFAULT_EXCLUDES" -eq 1 ]]; then
+    EXCLUDED_DIRS=("${DEFAULT_EXCLUDED_DIRS[@]}")
+  fi
+
+  local d resolved
+  for d in "${EXTRA_EXCLUDED_DIRS[@]}"; do
+    contains_glob_meta "$d" && die "les métacaractères de glob (* ? [ ]) ne sont pas autorisés dans --exclude : $d"
+    if [[ "$d" != /* ]]; then
+      d="${CURRENT_DIR%/}/$d"
+    fi
+    # On tente normalize_dir (physique, suit les symlinks) pour être cohérent
+    # avec CURRENT_DIR. Si le chemin n'existe pas encore, on repli sur la
+    # résolution lexicale afin de ne pas bloquer une exclusion anticipée.
+    resolved="$(normalize_dir "$d" 2>/dev/null)" || resolved="$(resolve_path_lexical "$d")"
+    EXCLUDED_DIRS+=("$resolved")
+  done
+}
+
+refresh_active_exclusions() {
+  ACTIVE_EXCLUDED_DIRS=()
+
+  local d
+  for d in "${EXCLUDED_DIRS[@]}"; do
+    if path_is_equal_or_within "$CURRENT_DIR" "$d"; then
+      continue
+    fi
+    ACTIVE_EXCLUDED_DIRS+=("$d")
+  done
+
+  if [[ -n "$TEMP_ROOT" ]]; then
+    ACTIVE_EXCLUDED_DIRS+=("$TEMP_ROOT")
+  fi
+}
+
+get_df_fields() {
+  local df_out size used avail usep mounted
+
+  if [[ "$PLATFORM" == "macos" ]]; then
+    # -P (POSIX) empêche le wrapping des longues lignes sur deux lignes.
+    df_out=$(df -Pk -- "$CURRENT_DIR" 2>/dev/null | tail -n 1)
+    [[ -z "$df_out" ]] && return 1
+    # Colonnes : Filesystem 1024-blocs Used Available Capacity [iused ifree %iused] Mounted-on
+    # printf "%d" évite la notation scientifique sur les disques > 1 To.
+    size=$(awk '{printf "%d\n", $2 * 1024}' <<< "$df_out")
+    used=$(awk '{printf "%d\n", $3 * 1024}' <<< "$df_out")
+    avail=$(awk '{printf "%d\n", $4 * 1024}' <<< "$df_out")
+    usep=$(awk '{print $5}' <<< "$df_out")
+    # Le mount point commence après Capacity ($5) ; peut contenir des espaces.
+    # Sur APFS avec colonnes inode, le mount point est le premier champ commençant par "/".
+    # Fallback sur $NF si aucun champ ne commence par "/".
+    mounted=$(awk '{
+      for(i=6;i<=NF;i++){
+        if($i~/^\//){
+          for(j=i;j<=NF;j++) printf "%s%s",$j,(j<NF?" ":"")
+          print ""; exit
+        }
+      }
+      print $NF
+    }' <<< "$df_out")
+  else
+    df_out=$(df --output=size,used,avail,pcent,target -B1 -- "$CURRENT_DIR" 2>/dev/null | tail -n 1)
+    [[ -z "$df_out" ]] && return 1
+    read -r size used avail usep mounted <<< "$df_out"
+  fi
+
+  printf '%s %s %s %s\t%s\n' "$size" "$used" "$avail" "$usep" "$mounted"
+}
+
+build_du_cmd() {
+  # shellcheck disable=SC2178
+  local -n out_arr="$1"
+  refresh_active_exclusions
+
+  out_arr=("$DU_CMD" -P -0 -B1 --max-depth=1)
+  [[ "$ANALYSIS_MODE" == "partition" ]] && out_arr+=(-x)
+
+  local d
+  for d in "${ACTIVE_EXCLUDED_DIRS[@]}"; do
+    out_arr+=(--exclude="$d")
+  done
+
+  out_arr+=(-- "$CURRENT_DIR")
+}
+
+build_du_tree_cmd() {
+  # shellcheck disable=SC2178
+  local -n out_arr="$1"
+  refresh_active_exclusions
+
+  out_arr=("$DU_CMD" -P -0 -B1 --max-depth="$TREE_DEPTH")
+  [[ "$ANALYSIS_MODE" == "partition" ]] && out_arr+=(-x)
+
+  local d
+  for d in "${ACTIVE_EXCLUDED_DIRS[@]}"; do
+    out_arr+=(--exclude="$d")
+  done
+
+  out_arr+=(-- "$CURRENT_DIR")
+}
+
+build_find_prefix() {
+  # shellcheck disable=SC2178
+  local -n out_arr="$1"
+  local maxdepth="${2-}"
+
+  refresh_active_exclusions
+  out_arr=("$FIND_CMD" -P "$CURRENT_DIR")
+
+  [[ "$ANALYSIS_MODE" == "partition" ]] && out_arr+=(-xdev)
+  [[ -n "$maxdepth" ]] && out_arr+=(-maxdepth "$maxdepth")
+
+  if ((${#ACTIVE_EXCLUDED_DIRS[@]} > 0)); then
+    out_arr+=( '(' )
+
+    local d first=1
+    for d in "${ACTIVE_EXCLUDED_DIRS[@]}"; do
+      (( first )) || out_arr+=(-o)
+      out_arr+=(-path "$d" -o -path "$d/*")
+      first=0
+    done
+
+    out_arr+=( ')' -prune -o )
+  fi
+}
+
+scan_subdirs_to_file() {
+  local out_file="$1"
+  local err_file="$2"
+  local job_rc=0
+
+  SCAN_WARNING=""
+  : > "$out_file"
+  : > "$err_file"
+  (( TOP_COUNT > 0 )) || return 0
+
+  if [[ "$SORT_MODE" == "mtime" ]]; then
+    local -a find_cmd
+    build_find_prefix find_cmd 1
+
+    (
+      "${find_cmd[@]}" -mindepth 1 -type d -printf '%T@\t%p\0' |
+        LC_ALL=C "$SORT_CMD" -zrn |
+        "$HEAD_CMD" -z -n "$TOP_COUNT"
+    ) >"$out_file" 2>"$err_file" &
+  else
+    local -a du_cmd
+    build_du_cmd du_cmd
+
+    (
+      "${du_cmd[@]}" |
+        awk -v RS='\0' -v ORS='\0' -v root="$CURRENT_DIR" '
+          {
+            tab = index($0, "\t")
+            if (tab == 0) next
+            path = substr($0, tab + 1)
+            if (path != root) print $0
+          }
+        ' |
+        LC_ALL=C "$SORT_CMD" -zrn |
+        "$HEAD_CMD" -z -n "$TOP_COUNT"
+    ) >"$out_file" 2>"$err_file" &
+  fi
+
+  local pid=$!
+  wait_for_job "$pid" || job_rc=$?
+  update_scan_warning "$err_file" "Analyse partielle possible" "$job_rc"
+  return 0
+}
+
+scan_top_files_to_file() {
+  local out_file="$1"
+  local err_file="$2"
+  local job_rc=0
+
+  SCAN_WARNING=""
+  : > "$out_file"
+  : > "$err_file"
+  (( TOP_FILES_COUNT > 0 )) || return 0
+
+  local -a find_cmd
+  local effective_find_maxdepth
+  if (( MAX_DEPTH >= 0 )); then
+    # Le contrat utilisateur exprime une profondeur relative au dossier courant :
+    #   0 = fichiers du dossier courant, 1 = + fichiers des sous-dossiers directs, etc.
+    # Avec find, le point de départ lui-même est à profondeur 0 ; on décale donc de +1.
+    effective_find_maxdepth=$((MAX_DEPTH + 1))
+    build_find_prefix find_cmd "$effective_find_maxdepth"
+  else
+    build_find_prefix find_cmd
+  fi
+
+  if [[ "$FILE_SIZE_MODE" == "apparent" ]]; then
+    (
+      "${find_cmd[@]}" -type f -printf '%s\t%p\0' |
+        LC_ALL=C "$SORT_CMD" -zrn |
+        "$HEAD_CMD" -z -n "$TOP_FILES_COUNT"
+    ) >"$out_file" 2>"$err_file" &
+  else
+    (
+      "${find_cmd[@]}" -type f -printf '%b\t%p\0' |
+        LC_ALL=C "$SORT_CMD" -zrn |
+        "$HEAD_CMD" -z -n "$TOP_FILES_COUNT"
+    ) >"$out_file" 2>"$err_file" &
+  fi
+
+  local pid=$!
+  wait_for_job "$pid" || job_rc=$?
+  update_scan_warning "$err_file" "Analyse partielle possible" "$job_rc"
+  return 0
+}
+
+update_scan_warning() {
+  local err_file="$1"
+  local context="$2"
+  local job_rc="$3"
+
+  SCAN_WARNING=""
+
+  if [[ -s "$err_file" ]]; then
+    local sample
+    sample=$(head -n 1 -- "$err_file" 2>/dev/null)
+    sample=${sample:-"détails non disponibles"}
+    SCAN_WARNING="${context} : $(sanitize_for_display "$sample")"
+  elif (( job_rc > 128 )); then
+    SCAN_WARNING="${context} : commande interrompue par signal $((job_rc - 128))"
+  elif (( job_rc != 0 )); then
+    SCAN_WARNING="${context} : commande terminée avec code ${job_rc}"
+  fi
+}
+
+run_scan_subdirs_job() {
+  local out_file="$1"
+  local err_file="$2"
+  local warning_file="$3"
+  local scan_rc=0
+
+  ENABLE_SPINNER=0
+  scan_subdirs_to_file "$out_file" "$err_file" || scan_rc=$?
+  printf '%s' "$SCAN_WARNING" > "$warning_file"
+  return "$scan_rc"
+}
+
+run_scan_top_files_job() {
+  local out_file="$1"
+  local err_file="$2"
+  local warning_file="$3"
+  local scan_rc=0
+
+  ENABLE_SPINNER=0
+  scan_top_files_to_file "$out_file" "$err_file" || scan_rc=$?
+  printf '%s' "$SCAN_WARNING" > "$warning_file"
+  return "$scan_rc"
+}
+
+# === MODULE: display ===
+# Sorties non-TUI : summary, report, tree, self-check
 
 self_check_report() {
   local -i rc=0
@@ -375,683 +732,276 @@ self_check_report() {
   return "$rc"
 }
 
-human_size() {
-  local size="$1"
+print_exclusions_summary() {
+  refresh_active_exclusions
 
-  if [[ "$HAVE_NUMFMT" -eq 1 ]]; then
-    "$NUMFMT_CMD" --to=iec-i --suffix=B --format="%.1f" "$size" 2>/dev/null && return 0
+  echo "Exclusions configurées  : ${#EXCLUDED_DIRS[@]}"
+  echo "Exclusions actives      : ${#ACTIVE_EXCLUDED_DIRS[@]}"
+
+  if (( ${#ACTIVE_EXCLUDED_DIRS[@]} > 0 )); then
+    local d
+    echo "Liste exclusions actives :"
+    for d in "${ACTIVE_EXCLUDED_DIRS[@]}"; do
+      echo "  - $(sanitize_for_display "$d")"
+    done
+  fi
+}
+
+generate_report_file() {
+  LAST_WARNING=""
+
+  mkdir -p -- "$REPORT_DIR" || die "impossible de créer le dossier de rapport '$REPORT_DIR'"
+
+  local timestamp safe_name report_file
+  timestamp=$(date '+%Y-%m-%d_%H-%M-%S')
+  safe_name=$(basename -- "$CURRENT_DIR" | tr -cd '[:alnum:]_-')
+  [[ -z "$safe_name" ]] && safe_name="root"
+  report_file="${REPORT_DIR}/Report_${safe_name}_${timestamp}.txt"
+
+  local tmp_report staged_report
+  # Générer d'abord le rapport hors du périmètre potentiellement scanné pour
+  # éviter toute auto-influence si REPORT_DIR est sous CURRENT_DIR.
+  tmp_report=$(make_temp_file) || die "impossible de préparer le rapport"
+
+  if ! print_summary > "$tmp_report"; then
+    rm -f -- "$tmp_report"
+    die "échec de génération du rapport"
   fi
 
-  # Fallback manuel : une décimale calculée pour rester cohérent avec numfmt.
-  local i=0 rem=0
-  local -a units=("B" "KiB" "MiB" "GiB" "TiB" "PiB" "EiB" "ZiB" "YiB")
-  while (( size >= 1024 && i < ${#units[@]} - 1 )); do
-    rem=$(( size % 1024 ))
-    size=$(( size / 1024 ))
-    (( i++ ))
-  done
-  if (( i > 0 )); then
-    printf '%d.%d%s\n' "$size" "$(( rem * 10 / 1024 ))" "${units[i]}"
+  # Une fois le contenu final stabilisé, préparer un fichier de staging dans
+  # REPORT_DIR puis faire un rename final atomique sur le même filesystem.
+  staged_report=$(mktemp -- "${REPORT_DIR}/.Report_${safe_name}_${timestamp}.stage.XXXXXX")     || { rm -f -- "$tmp_report"; die "impossible de préparer le fichier de staging du rapport dans '$REPORT_DIR'"; }
+
+  if ! cat -- "$tmp_report" > "$staged_report"; then
+    rm -f -- "$tmp_report" "$staged_report"
+    die "impossible d'écrire le rapport temporaire dans '$REPORT_DIR'"
+  fi
+
+  rm -f -- "$tmp_report"
+
+  mv -f -- "$staged_report" "$report_file" || { rm -f -- "$staged_report"; die "impossible d'écrire le rapport '$report_file'"; }
+
+  LAST_WARNING="rapport créé : $report_file"
+}
+
+print_summary() {
+  LAST_WARNING=""
+  PARTIAL_SCAN_DETECTED=0
+
+  local tmp_sub err_sub warn_sub tmp_files err_files warn_files
+  tmp_sub=$(make_temp_file) || return 1
+  err_sub=$(make_temp_file) || return 1
+  warn_sub=$(make_temp_file) || return 1
+  tmp_files=$(make_temp_file) || return 1
+  err_files=$(make_temp_file) || return 1
+  warn_files=$(make_temp_file) || return 1
+
+  local sub_warning="" files_warning=""
+  local sub_rc=0 files_rc=0
+  local pid_sub pid_files
+
+  run_scan_subdirs_job "$tmp_sub" "$err_sub" "$warn_sub" &
+  pid_sub=$!
+  run_scan_top_files_job "$tmp_files" "$err_files" "$warn_files" &
+  pid_files=$!
+
+  wait "$pid_sub" || sub_rc=$?
+  wait "$pid_files" || files_rc=$?
+
+  (( sub_rc != 0 )) && { rm -f -- "$tmp_sub" "$err_sub" "$warn_sub" "$tmp_files" "$err_files" "$warn_files"; return "$sub_rc"; }
+  (( files_rc != 0 )) && { rm -f -- "$tmp_sub" "$err_sub" "$warn_sub" "$tmp_files" "$err_files" "$warn_files"; return "$files_rc"; }
+
+  sub_warning=$(cat -- "$warn_sub" 2>/dev/null)
+  files_warning=$(cat -- "$warn_files" 2>/dev/null)
+
+  local df_fields size used avail use_p mounted fields
+  if df_fields="$(get_df_fields)"; then
+    IFS=$'\t' read -r fields mounted <<< "$df_fields"
+    read -r size used avail use_p <<< "$fields"
   else
-    printf '%d%s\n' "$size" "${units[i]}"
-  fi
-}
-
-normalize_dir() {
-  local input="$1"
-  (cd -- "$input" 2>/dev/null && pwd -P)
-}
-
-resolve_path_lexical() {
-  local input="$1"
-
-  if [[ "$input" != /* ]]; then
-    input="${CURRENT_DIR%/}/$input"
+    size="?"
+    used="?"
+    avail="?"
+    use_p="?"
+    mounted="?"
   fi
 
-  if realpath -m -- / >/dev/null 2>&1; then
-    realpath -m -- "$input"
-    return
+  echo "RAPPORT DISQUE - $(date)"
+  echo "Dossier                : $CURRENT_DIR"
+  echo "Mode analyse           : $(analysis_label)"
+  echo "Tri sous-dossiers      : $SORT_MODE"
+  echo "Mode taille fichiers   : $(file_size_label)"
+  echo "Profondeur max fichiers: $(depth_label)"
+  echo "Top sous-dossiers      : $TOP_COUNT"
+  echo "Top fichiers           : $TOP_FILES_COUNT"
+  print_exclusions_summary
+  echo "Partition              : $mounted"
+  [[ "$size" == "?" ]] && echo "Total                  : ?" || echo "Total                  : $(human_size "$size")"
+  [[ "$avail" == "?" ]] && echo "Libre                  : ?" || echo "Libre                  : $(human_size "$avail")"
+  echo "Occupation             : $use_p"
+  echo
+
+  if [[ -n "$sub_warning" || -n "$files_warning" ]]; then
+    PARTIAL_SCAN_DETECTED=1
+    echo "AVERTISSEMENTS :"
+    [[ -n "$sub_warning" ]] && echo "  - $sub_warning"
+    [[ -n "$files_warning" ]] && echo "  - $files_warning"
+    echo
+    LAST_WARNING="${sub_warning:-$files_warning}"
   fi
 
-  local path="$input"
-  local IFS='/'
-  local -a parts stack=()
-  read -r -a parts <<< "${path#/}"
-
-  local part idx joined
-  for part in "${parts[@]}"; do
-    case "$part" in
-      ''|.)
-        continue
-        ;;
-      ..)
-        if ((${#stack[@]} > 0)); then
-          idx=$((${#stack[@]} - 1))
-          unset "stack[$idx]"
-          stack=("${stack[@]}")
-        fi
-        ;;
-      *)
-        stack+=("$part")
-        ;;
-    esac
-  done
-
-  if ((${#stack[@]} == 0)); then
-    printf '/\n'
+  echo "TOP SOUS-DOSSIERS :"
+  local found=0
+  local line ts full_path raw_size
+  if [[ "$SORT_MODE" == "mtime" ]]; then
+    while IFS= read -r -d '' line; do
+      ts="${line%%$'\t'*}"
+      full_path="${line#*$'\t'}"
+      [[ -z "$full_path" || "$full_path" == "$line" ]] && continue
+      printf '  %s  %s\n' "$(date_from_epoch "$ts")" "$(sanitize_for_display "$full_path")"
+      found=1
+    done < "$tmp_sub"
   else
-    printf -v joined '%s/' "${stack[@]}"
-    printf '/%s\n' "${joined%/}"
+    while IFS= read -r -d '' line; do
+      raw_size="${line%%$'\t'*}"
+      full_path="${line#*$'\t'}"
+      [[ -z "$full_path" || "$full_path" == "$line" ]] && continue
+      printf '  %12s  %s\n' "$(human_size "$raw_size")" "$(sanitize_for_display "$full_path")"
+      found=1
+    done < "$tmp_sub"
   fi
-}
+  (( found == 0 )) && echo "  (aucun)"
 
-init_temp_root() {
-  TEMP_ROOT="$(mktemp -d \"${TMPDIR:-/tmp}/disk-explorer.XXXXXX\")" || die "impossible de créer le répertoire temporaire"
-}
+  echo
+  echo "TOP FICHIERS :"
+  found=0
+  local value path size_bytes
+  while IFS= read -r -d '' line; do
+    value="${line%%$'\t'*}"
+    path="${line#*$'\t'}"
+    [[ -z "$path" || "$path" == "$line" ]] && continue
 
-make_temp_file() {
-  [[ -n "$TEMP_ROOT" && -d "$TEMP_ROOT" ]] || init_temp_root
-  mktemp "$TEMP_ROOT/tmp.XXXXXX"
-}
-
-cleanup() {
-  [[ -n "$TEMP_ROOT" && -d "$TEMP_ROOT" ]] && rm -rf -- "$TEMP_ROOT"
-}
-
-on_interrupt() {
-  # Le trap EXIT appellera cleanup() automatiquement après exit.
-  printf '\n' >&2
-  exit 130
-}
-
-trap cleanup EXIT
-trap on_interrupt INT TERM
-
-init_colors() {
-  if [[ "$NO_COLOR" -eq 0 && -t 1 ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'
-    CYAN='\033[0;36m'
-    MAGENTA='\033[0;35m'
-    BOLD='\033[1m'
-    DIM='\033[2m'
-    NC='\033[0m'
-  fi
-}
-
-init_runtime_flags() {
-  if [[ -t 1 && "$NO_SPINNER" -eq 0 ]]; then
-    ENABLE_SPINNER=1
-  else
-    ENABLE_SPINNER=0
-  fi
-
-  if [[ "$RUN_MODE" == "interactive" && ( ! -t 0 || ! -t 1 ) ]]; then
-    RUN_MODE="summary"
-    ENABLE_SPINNER=0
-  fi
-}
-
-spinner() {
-  local pid="$1"
-  local chars="|/-\\"
-  local i=0
-
-  while kill -0 "$pid" 2>/dev/null; do
-    printf ' [%s]\r' "${chars:i:1}" >&2
-    i=$(((i + 1) % 4))
-    sleep 0.1
-  done
-  # Effacement propre de la ligne de spinner.
-  printf '\r\033[K' >&2
-}
-
-wait_for_job() {
-  local pid="$1"
-  if [[ "$ENABLE_SPINNER" -eq 1 ]]; then
-    spinner "$pid"
-  fi
-  wait "$pid"
-}
-
-path_is_equal_or_within() {
-  local path="$1"
-  local base="$2"
-
-  if [[ "$base" == "/" ]]; then
-    [[ "$path" == /* ]]
-    return
-  fi
-
-  [[ "$path" == "$base" || "$path" == "$base"/* ]]
-}
-
-analysis_label() {
-  [[ "$ANALYSIS_MODE" == "partition" ]] && echo "MÊME PARTITION" || echo "GLOBAL"
-}
-
-detect_platform() {
-  [[ "$OSTYPE" == darwin* ]] && PLATFORM="macos" || PLATFORM="linux"
-}
-
-resolve_gnu_tools_macos() {
-  local -a missing_tools=()
-  local -a brew_pkgs=()
-
-  _try_gnu_tool() {
-    local var="$1" gnu_name="$2" pkg="$3"
-    if command -v "$gnu_name" >/dev/null 2>&1; then
-      printf -v "$var" '%s' "$gnu_name"
-    elif command -v "${gnu_name#g}" >/dev/null 2>&1 && \
-         "${gnu_name#g}" --version 2>&1 | grep -q GNU; then
-      printf -v "$var" '%s' "${gnu_name#g}"
+    if [[ "$FILE_SIZE_MODE" == "apparent" ]]; then
+      size_bytes="$value"
     else
-      missing_tools+=("$gnu_name")
-      brew_pkgs+=("$pkg")
+      size_bytes=$((value * 512))
     fi
-  }
 
-  _try_gnu_tool FIND_CMD  gfind   findutils
-  _try_gnu_tool SORT_CMD  gsort   coreutils
-  _try_gnu_tool HEAD_CMD  ghead   coreutils
-  _try_gnu_tool DU_CMD    gdu     coreutils
-  _try_gnu_tool NUMFMT_CMD gnumfmt coreutils
+    printf '  %12s  %s\n' "$(human_size "$size_bytes")" "$(sanitize_for_display "$path")"
+    found=1
+  done < "$tmp_files"
+  (( found == 0 )) && echo "  (aucun)"
 
-  unset -f _try_gnu_tool
+  rm -f -- "$tmp_sub" "$err_sub" "$warn_sub" "$tmp_files" "$err_files" "$warn_files"
+}
 
-  if (( ${#missing_tools[@]} == 0 )); then
+print_tree_view() {
+  LAST_WARNING=""
+
+  local tmp_file err_file
+  tmp_file=$(make_temp_file) || return 1
+  err_file=$(make_temp_file) || return 1
+  : > "$tmp_file"
+  : > "$err_file"
+
+  local -a du_cmd
+  build_du_tree_cmd du_cmd
+
+  "${du_cmd[@]}" >"$tmp_file" 2>"$err_file"
+
+  local job_rc=$?
+  update_scan_warning "$err_file" "Vue arborescente partielle possible" "$job_rc"
+  [[ -n "$SCAN_WARNING" ]] && echo "Avertissement: $SCAN_WARNING"
+
+  echo "TREE SIZE VIEW (depth=${TREE_DEPTH}) - $CURRENT_DIR"
+
+  declare -A tree_size_map=()
+  declare -A tree_children_map=()
+
+  local line raw_size full_path parent
+  while IFS= read -r -d '' line; do
+    raw_size="${line%%$'\t'*}"
+    full_path="${line#*$'\t'}"
+    [[ -z "$full_path" || "$full_path" == "$line" ]] && continue
+
+    tree_size_map["$full_path"]="$raw_size"
+
+    if [[ "$full_path" != "$CURRENT_DIR" ]]; then
+      parent="$(dirname -- "$full_path")"
+      if path_is_equal_or_within "$parent" "$CURRENT_DIR"; then
+        tree_children_map["$parent"]+="$full_path"$'\n'
+      fi
+    fi
+  done < "$tmp_file"
+
+  if [[ -z "${tree_size_map["$CURRENT_DIR"]+x}" ]]; then
+    echo "Aucune donnée d'arborescence disponible."
+    rm -f -- "$tmp_file" "$err_file"
     return 0
   fi
 
-  # Dedupliquer les paquets
-  local -A _seen=()
-  local -a unique_pkgs=()
-  local p
-  for p in "${brew_pkgs[@]}"; do
-    if [[ -z "${_seen[$p]+x}" ]]; then
-      _seen[$p]=1
-      unique_pkgs+=("$p")
+  tree_percent_str() {
+    local child_size="$1"
+    local parent_size="$2"
+    local pct10=0
+    if (( parent_size > 0 )); then
+      pct10=$(( child_size * 1000 / parent_size ))
     fi
-  done
+    printf '%d.%d%%' "$((pct10 / 10))" "$((pct10 % 10))"
+  }
 
-  local missing_str
-  printf -v missing_str '%s ' "${missing_tools[@]}"
-  missing_str="${missing_str% }"
+  tree_print_node() {
+    local node="$1"
+    local depth="$2"
+    local parent_size="$3"
+    local node_size="${tree_size_map[$node]}"
+    local rel indent pct
 
-  if ! command -v brew >/dev/null 2>&1; then
-    printf 'Erreur: outils GNU manquants: %s\n' "$missing_str" >&2
-    printf 'Homebrew requis. Installez-le depuis https://brew.sh puis relancez.\n' >&2
-    exit 1
-  fi
+    if [[ "$node" == "$CURRENT_DIR" ]]; then
+      rel="."
+      pct="100.0%"
+    else
+      rel="${node#"${CURRENT_DIR}/"}"
+      pct="$(tree_percent_str "$node_size" "$parent_size")"
+    fi
 
-  if [[ ! -t 0 || ! -t 1 ]]; then
-    printf 'Erreur: outils GNU manquants: %s\n' "$missing_str" >&2
-    printf 'Installez-les manuellement: brew install %s\n' "${unique_pkgs[*]}" >&2
-    exit 1
-  fi
+    if (( depth > 0 )); then
+      printf -v indent '%*s' $(( (depth - 1) * 2 )) ''
+      printf '%12s  %7s  %s├── %s\n' "$(human_size "$node_size")" "$pct" "$indent" "$(sanitize_for_display "$rel")"
+    else
+      printf '%12s  %7s  %s\n' "$(human_size "$node_size")" "$pct" "$(sanitize_for_display "$rel")"
+    fi
 
-  printf 'Outils GNU requis manquants: %s\n' "$missing_str" >&2
-  printf 'Installation via Homebrew: brew install %s\n' "${unique_pkgs[*]}" >&2
-  local answer
-  read -r -p "Installer maintenant ? [o/N] " answer
-  if [[ "${answer,,}" != "o" ]]; then
-    printf 'Installation annulee.\n' >&2
-    exit 1
-  fi
+    local children_raw child
+    children_raw="${tree_children_map[$node]-}"
+    [[ -z "$children_raw" ]] && return 0
 
-  HOMEBREW_NO_AUTO_UPDATE=1 brew install "${unique_pkgs[@]}" || die "echec de l'installation Homebrew"
+    local -a sorted_children=()
+    mapfile -d '' -t sorted_children < <(
+      while IFS= read -r child; do
+        [[ -z "$child" ]] && continue
+        printf '%s\t%s\0' "${tree_size_map[$child]}" "$child"
+      done <<< "$children_raw" | LC_ALL=C "$SORT_CMD" -zrn | awk -v RS='\0' -v ORS='\0' -F '\t' '{sub(/^[^\t]*\t/, "", $0); print $0}'
+    )
 
-  # Re-verifier apres install
-  local tool
-  for tool in "${missing_tools[@]}"; do
-    command -v "$tool" >/dev/null 2>&1 || die "outil toujours manquant apres install: $tool"
-  done
+    local next_child
+    for next_child in "${sorted_children[@]}"; do
+      tree_print_node "$next_child" "$((depth + 1))" "$node_size"
+    done
+  }
 
-  # Reappel pour fixer les variables CMD
-  resolve_gnu_tools_macos
+  tree_print_node "$CURRENT_DIR" 0 "${tree_size_map[$CURRENT_DIR]}"
+
+  rm -f -- "$tmp_file" "$err_file"
 }
 
-file_size_label() {
-  [[ "$FILE_SIZE_MODE" == "real" ]] && echo "Réel (blocs alloués)" || echo "Apparent (taille logique)"
-}
-
-depth_label() {
-  (( MAX_DEPTH >= 0 )) && echo "$MAX_DEPTH" || echo "illimitée"
-}
-
-is_heavy_known() {
-  local name="$1"
-  local pat
-  for pat in "${HEAVY_KNOWN_PATTERNS[@]}"; do
-    [[ "$name" == *"$pat"* ]] && return 0
-  done
-  return 1
-}
-
-date_from_epoch() {
-  if [[ "$PLATFORM" == "macos" ]]; then
-    date -r "${1%.*}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "?"
-  else
-    date -d "@${1%.*}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "?"
-  fi
-}
-
-update_scan_warning() {
-  local err_file="$1"
-  local context="$2"
-  local job_rc="$3"
-
-  SCAN_WARNING=""
-
-  if [[ -s "$err_file" ]]; then
-    local sample
-    sample=$(head -n 1 -- "$err_file" 2>/dev/null)
-    sample=${sample:-"détails non disponibles"}
-    SCAN_WARNING="${context} : $(sanitize_for_display "$sample")"
-  elif (( job_rc > 128 )); then
-    SCAN_WARNING="${context} : commande interrompue par signal $((job_rc - 128))"
-  elif (( job_rc != 0 )); then
-    SCAN_WARNING="${context} : commande terminée avec code ${job_rc}"
-  fi
-}
-
-run_scan_subdirs_job() {
-  local out_file="$1"
-  local err_file="$2"
-  local warning_file="$3"
-  local scan_rc=0
-
-  ENABLE_SPINNER=0
-  scan_subdirs_to_file "$out_file" "$err_file" || scan_rc=$?
-  printf '%s' "$SCAN_WARNING" > "$warning_file"
-  return "$scan_rc"
-}
-
-run_scan_top_files_job() {
-  local out_file="$1"
-  local err_file="$2"
-  local warning_file="$3"
-  local scan_rc=0
-
-  ENABLE_SPINNER=0
-  scan_top_files_to_file "$out_file" "$err_file" || scan_rc=$?
-  printf '%s' "$SCAN_WARNING" > "$warning_file"
-  return "$scan_rc"
-}
+# === MODULE: tui ===
+# TUI interactif : dessin, saisie, navigation
 
 pause_screen() {
   echo
   read -r -p "Appuyez sur Entrée..." || true
 }
-
-# ================== PARSE CLI ==================
-
-parse_args() {
-  local positional_path_used=0
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --path)
-        shift
-        [[ $# -gt 0 ]] || die "argument manquant pour --path"
-        CURRENT_DIR_INPUT="$1"
-        ;;
-      --mode)
-        shift
-        [[ $# -gt 0 ]] || die "argument manquant pour --mode"
-        case "$1" in
-          partition|global) ANALYSIS_MODE="$1" ;;
-          *) die "--mode doit valoir partition ou global" ;;
-        esac
-        ;;
-      --sort)
-        shift
-        [[ $# -gt 0 ]] || die "argument manquant pour --sort"
-        case "$1" in
-          size|mtime) SORT_MODE="$1" ;;
-          *) die "--sort doit valoir size ou mtime" ;;
-        esac
-        ;;
-      --file-size)
-        shift
-        [[ $# -gt 0 ]] || die "argument manquant pour --file-size"
-        case "$1" in
-          real|apparent) FILE_SIZE_MODE="$1" ;;
-          *) die "--file-size doit valoir real ou apparent" ;;
-        esac
-        ;;
-      --top-count)
-        shift
-        [[ $# -gt 0 ]] || die "argument manquant pour --top-count"
-        is_non_negative_int "$1" || die "--top-count doit être un entier >= 0"
-        (( $1 <= MAX_ALLOWED_RESULTS )) || die "--top-count doit être <= ${MAX_ALLOWED_RESULTS}"
-        TOP_COUNT="$1"
-        ;;
-      --top-files)
-        shift
-        [[ $# -gt 0 ]] || die "argument manquant pour --top-files"
-        is_non_negative_int "$1" || die "--top-files doit être un entier >= 0"
-        (( $1 <= MAX_ALLOWED_RESULTS )) || die "--top-files doit être <= ${MAX_ALLOWED_RESULTS}"
-        TOP_FILES_COUNT="$1"
-        ;;
-      --max-depth)
-        shift
-        [[ $# -gt 0 ]] || die "argument manquant pour --max-depth"
-        is_integer "$1" || die "--max-depth doit être un entier"
-        (( "$1" >= -1 )) || die "--max-depth doit être >= -1"
-        (( "$1" <= MAX_ALLOWED_DEPTH )) || die "--max-depth doit être <= ${MAX_ALLOWED_DEPTH}"
-        MAX_DEPTH="$1"
-        ;;
-      --report)
-        RUN_MODE="report"
-        ;;
-      --summary)
-        RUN_MODE="summary"
-        ;;
-      --tree)
-        RUN_MODE="tree"
-        ;;
-      --tree-depth)
-        shift
-        [[ $# -gt 0 ]] || die "argument manquant pour --tree-depth"
-        is_non_negative_int "$1" || die "--tree-depth doit être un entier >= 0"
-        (( "$1" <= MAX_ALLOWED_DEPTH )) || die "--tree-depth doit être <= ${MAX_ALLOWED_DEPTH}"
-        TREE_DEPTH="$1"
-        ;;
-      --self-check)
-        SELF_CHECK_ONLY=1
-        ;;
-      --interactive)
-        RUN_MODE="interactive"
-        ;;
-      --report-dir)
-        shift
-        [[ $# -gt 0 ]] || die "argument manquant pour --report-dir"
-        REPORT_DIR="$1"
-        ;;
-      --exclude)
-        shift
-        [[ $# -gt 0 ]] || die "argument manquant pour --exclude"
-        EXTRA_EXCLUDED_DIRS+=("$1")
-        ;;
-      --no-default-excludes)
-        USE_DEFAULT_EXCLUDES=0
-        ;;
-      --no-color)
-        NO_COLOR=1
-        ;;
-      --no-spinner)
-        NO_SPINNER=1
-        ;;
-      -h|--help)
-        usage
-        exit 0
-        ;;
-      --)
-        shift
-        # Convention POSIX : tout ce qui suit -- est positionnel, pas une option.
-        while [[ $# -gt 0 ]]; do
-          if (( positional_path_used == 0 )); then
-            CURRENT_DIR_INPUT="$1"
-            positional_path_used=1
-          else
-            die "trop d'arguments positionnels"
-          fi
-          shift
-        done
-        break
-        ;;
-      -*)
-        die "option inconnue : $1"
-        ;;
-      *)
-        if (( positional_path_used == 0 )); then
-          CURRENT_DIR_INPUT="$1"
-          positional_path_used=1
-        else
-          die "trop d'arguments positionnels"
-        fi
-        ;;
-    esac
-    shift
-  done
-}
-
-set_current_dir() {
-  local target="$1"
-  local normalized
-
-  normalized="$(normalize_dir "$target")" || return 1
-  CURRENT_DIR="$normalized"
-  refresh_active_exclusions
-}
-
-prepare_current_dir() {
-  set_current_dir "$CURRENT_DIR_INPUT" || die "le dossier '$CURRENT_DIR_INPUT' n'existe pas ou n'est pas accessible"
-}
-
-prepare_exclusions() {
-  EXCLUDED_DIRS=()
-
-  if [[ "$USE_DEFAULT_EXCLUDES" -eq 1 ]]; then
-    EXCLUDED_DIRS=("${DEFAULT_EXCLUDED_DIRS[@]}")
-  fi
-
-  local d resolved
-  for d in "${EXTRA_EXCLUDED_DIRS[@]}"; do
-    contains_glob_meta "$d" && die "les métacaractères de glob (* ? [ ]) ne sont pas autorisés dans --exclude : $d"
-    if [[ "$d" != /* ]]; then
-      d="${CURRENT_DIR%/}/$d"
-    fi
-    # On tente normalize_dir (physique, suit les symlinks) pour être cohérent
-    # avec CURRENT_DIR. Si le chemin n'existe pas encore, on repli sur la
-    # résolution lexicale afin de ne pas bloquer une exclusion anticipée.
-    resolved="$(normalize_dir "$d" 2>/dev/null)" || resolved="$(resolve_path_lexical "$d")"
-    EXCLUDED_DIRS+=("$resolved")
-  done
-}
-
-refresh_active_exclusions() {
-  ACTIVE_EXCLUDED_DIRS=()
-
-  local d
-  for d in "${EXCLUDED_DIRS[@]}"; do
-    if path_is_equal_or_within "$CURRENT_DIR" "$d"; then
-      continue
-    fi
-    ACTIVE_EXCLUDED_DIRS+=("$d")
-  done
-
-  if [[ -n "$TEMP_ROOT" ]]; then
-    ACTIVE_EXCLUDED_DIRS+=("$TEMP_ROOT")
-  fi
-}
-
-# ================== COMMAND BUILDERS ==================
-
-get_df_fields() {
-  local df_out size used avail usep mounted
-
-  if [[ "$PLATFORM" == "macos" ]]; then
-    # -P (POSIX) empêche le wrapping des longues lignes sur deux lignes.
-    df_out=$(df -Pk -- "$CURRENT_DIR" 2>/dev/null | tail -n 1)
-    [[ -z "$df_out" ]] && return 1
-    # Colonnes : Filesystem 1024-blocs Used Available Capacity [iused ifree %iused] Mounted-on
-    # printf "%d" évite la notation scientifique sur les disques > 1 To.
-    size=$(awk '{printf "%d\n", $2 * 1024}' <<< "$df_out")
-    used=$(awk '{printf "%d\n", $3 * 1024}' <<< "$df_out")
-    avail=$(awk '{printf "%d\n", $4 * 1024}' <<< "$df_out")
-    usep=$(awk '{print $5}' <<< "$df_out")
-    # Le mount point commence après Capacity ($5) ; peut contenir des espaces.
-    # Sur APFS avec colonnes inode, le mount point est le premier champ commençant par "/".
-    # Fallback sur $NF si aucun champ ne commence par "/".
-    mounted=$(awk '{
-      for(i=6;i<=NF;i++){
-        if($i~/^\//){
-          for(j=i;j<=NF;j++) printf "%s%s",$j,(j<NF?" ":"")
-          print ""; exit
-        }
-      }
-      print $NF
-    }' <<< "$df_out")
-  else
-    df_out=$(df --output=size,used,avail,pcent,target -B1 -- "$CURRENT_DIR" 2>/dev/null | tail -n 1)
-    [[ -z "$df_out" ]] && return 1
-    read -r size used avail usep mounted <<< "$df_out"
-  fi
-
-  printf '%s %s %s %s\t%s\n' "$size" "$used" "$avail" "$usep" "$mounted"
-}
-
-build_du_cmd() {
-  # shellcheck disable=SC2178
-  local -n out_arr="$1"
-  refresh_active_exclusions
-
-  out_arr=("$DU_CMD" -P -0 -B1 --max-depth=1)
-  [[ "$ANALYSIS_MODE" == "partition" ]] && out_arr+=(-x)
-
-  local d
-  for d in "${ACTIVE_EXCLUDED_DIRS[@]}"; do
-    out_arr+=(--exclude="$d")
-  done
-
-  out_arr+=(-- "$CURRENT_DIR")
-}
-
-build_du_tree_cmd() {
-  # shellcheck disable=SC2178
-  local -n out_arr="$1"
-  refresh_active_exclusions
-
-  out_arr=("$DU_CMD" -P -0 -B1 --max-depth="$TREE_DEPTH")
-  [[ "$ANALYSIS_MODE" == "partition" ]] && out_arr+=(-x)
-
-  local d
-  for d in "${ACTIVE_EXCLUDED_DIRS[@]}"; do
-    out_arr+=(--exclude="$d")
-  done
-
-  out_arr+=(-- "$CURRENT_DIR")
-}
-
-build_find_prefix() {
-  # shellcheck disable=SC2178
-  local -n out_arr="$1"
-  local maxdepth="${2-}"
-
-  refresh_active_exclusions
-  out_arr=("$FIND_CMD" -P "$CURRENT_DIR")
-
-  [[ "$ANALYSIS_MODE" == "partition" ]] && out_arr+=(-xdev)
-  [[ -n "$maxdepth" ]] && out_arr+=(-maxdepth "$maxdepth")
-
-  if ((${#ACTIVE_EXCLUDED_DIRS[@]} > 0)); then
-    out_arr+=( '(' )
-
-    local d first=1
-    for d in "${ACTIVE_EXCLUDED_DIRS[@]}"; do
-      (( first )) || out_arr+=(-o)
-      out_arr+=(-path "$d" -o -path "$d/*")
-      first=0
-    done
-
-    out_arr+=( ')' -prune -o )
-  fi
-}
-
-# ================== SCANS ==================
-
-scan_subdirs_to_file() {
-  local out_file="$1"
-  local err_file="$2"
-  local job_rc=0
-
-  SCAN_WARNING=""
-  : > "$out_file"
-  : > "$err_file"
-  (( TOP_COUNT > 0 )) || return 0
-
-  if [[ "$SORT_MODE" == "mtime" ]]; then
-    local -a find_cmd
-    build_find_prefix find_cmd 1
-
-    (
-      "${find_cmd[@]}" -mindepth 1 -type d -printf '%T@\t%p\0' |
-        LC_ALL=C "$SORT_CMD" -zrn |
-        "$HEAD_CMD" -z -n "$TOP_COUNT"
-    ) >"$out_file" 2>"$err_file" &
-  else
-    local -a du_cmd
-    build_du_cmd du_cmd
-
-    (
-      "${du_cmd[@]}" |
-        awk -v RS='\0' -v ORS='\0' -v root="$CURRENT_DIR" '
-          {
-            tab = index($0, "\t")
-            if (tab == 0) next
-            path = substr($0, tab + 1)
-            if (path != root) print $0
-          }
-        ' |
-        LC_ALL=C "$SORT_CMD" -zrn |
-        "$HEAD_CMD" -z -n "$TOP_COUNT"
-    ) >"$out_file" 2>"$err_file" &
-  fi
-
-  local pid=$!
-  wait_for_job "$pid" || job_rc=$?
-  update_scan_warning "$err_file" "Analyse partielle possible" "$job_rc"
-  return 0
-}
-
-scan_top_files_to_file() {
-  local out_file="$1"
-  local err_file="$2"
-  local job_rc=0
-
-  SCAN_WARNING=""
-  : > "$out_file"
-  : > "$err_file"
-  (( TOP_FILES_COUNT > 0 )) || return 0
-
-  local -a find_cmd
-  local effective_find_maxdepth
-  if (( MAX_DEPTH >= 0 )); then
-    # Le contrat utilisateur exprime une profondeur relative au dossier courant :
-    #   0 = fichiers du dossier courant, 1 = + fichiers des sous-dossiers directs, etc.
-    # Avec find, le point de départ lui-même est à profondeur 0 ; on décale donc de +1.
-    effective_find_maxdepth=$((MAX_DEPTH + 1))
-    build_find_prefix find_cmd "$effective_find_maxdepth"
-  else
-    build_find_prefix find_cmd
-  fi
-
-  if [[ "$FILE_SIZE_MODE" == "apparent" ]]; then
-    (
-      "${find_cmd[@]}" -type f -printf '%s\t%p\0' |
-        LC_ALL=C "$SORT_CMD" -zrn |
-        "$HEAD_CMD" -z -n "$TOP_FILES_COUNT"
-    ) >"$out_file" 2>"$err_file" &
-  else
-    (
-      "${find_cmd[@]}" -type f -printf '%b\t%p\0' |
-        LC_ALL=C "$SORT_CMD" -zrn |
-        "$HEAD_CMD" -z -n "$TOP_FILES_COUNT"
-    ) >"$out_file" 2>"$err_file" &
-  fi
-
-  local pid=$!
-  wait_for_job "$pid" || job_rc=$?
-  update_scan_warning "$err_file" "Analyse partielle possible" "$job_rc"
-  return 0
-}
-
-# ================== AIDE / CONFIG INTERACTIVE ==================
 
 show_help_screen() {
   [[ -t 1 ]] && clear
@@ -1286,8 +1236,6 @@ config_menu() {
   done
 }
 
-# ================== AFFICHAGE INTERACTIF ==================
-
 show_header() {
   [[ -t 1 ]] && clear
 
@@ -1432,58 +1380,6 @@ show_heavy_files() {
   pause_screen
 }
 
-print_exclusions_summary() {
-  refresh_active_exclusions
-
-  echo "Exclusions configurées  : ${#EXCLUDED_DIRS[@]}"
-  echo "Exclusions actives      : ${#ACTIVE_EXCLUDED_DIRS[@]}"
-
-  if (( ${#ACTIVE_EXCLUDED_DIRS[@]} > 0 )); then
-    local d
-    echo "Liste exclusions actives :"
-    for d in "${ACTIVE_EXCLUDED_DIRS[@]}"; do
-      echo "  - $(sanitize_for_display "$d")"
-    done
-  fi
-}
-
-generate_report_file() {
-  LAST_WARNING=""
-
-  mkdir -p -- "$REPORT_DIR" || die "impossible de créer le dossier de rapport '$REPORT_DIR'"
-
-  local timestamp safe_name report_file
-  timestamp=$(date '+%Y-%m-%d_%H-%M-%S')
-  safe_name=$(basename -- "$CURRENT_DIR" | tr -cd '[:alnum:]_-')
-  [[ -z "$safe_name" ]] && safe_name="root"
-  report_file="${REPORT_DIR}/Report_${safe_name}_${timestamp}.txt"
-
-  local tmp_report staged_report
-  # Générer d'abord le rapport hors du périmètre potentiellement scanné pour
-  # éviter toute auto-influence si REPORT_DIR est sous CURRENT_DIR.
-  tmp_report=$(make_temp_file) || die "impossible de préparer le rapport"
-
-  if ! print_summary > "$tmp_report"; then
-    rm -f -- "$tmp_report"
-    die "échec de génération du rapport"
-  fi
-
-  # Une fois le contenu final stabilisé, préparer un fichier de staging dans
-  # REPORT_DIR puis faire un rename final atomique sur le même filesystem.
-  staged_report=$(mktemp -- "${REPORT_DIR}/.Report_${safe_name}_${timestamp}.stage.XXXXXX")     || { rm -f -- "$tmp_report"; die "impossible de préparer le fichier de staging du rapport dans '$REPORT_DIR'"; }
-
-  if ! cat -- "$tmp_report" > "$staged_report"; then
-    rm -f -- "$tmp_report" "$staged_report"
-    die "impossible d'écrire le rapport temporaire dans '$REPORT_DIR'"
-  fi
-
-  rm -f -- "$tmp_report"
-
-  mv -f -- "$staged_report" "$report_file" || { rm -f -- "$staged_report"; die "impossible d'écrire le rapport '$report_file'"; }
-
-  LAST_WARNING="rapport créé : $report_file"
-}
-
 navigate() {
   while true; do
     show_header
@@ -1556,220 +1452,325 @@ navigate() {
   done
 }
 
-# ================== SORTIE NON INTERACTIVE ==================
-
-print_summary() {
-  LAST_WARNING=""
-  PARTIAL_SCAN_DETECTED=0
-
-  local tmp_sub err_sub warn_sub tmp_files err_files warn_files
-  tmp_sub=$(make_temp_file) || return 1
-  err_sub=$(make_temp_file) || return 1
-  warn_sub=$(make_temp_file) || return 1
-  tmp_files=$(make_temp_file) || return 1
-  err_files=$(make_temp_file) || return 1
-  warn_files=$(make_temp_file) || return 1
-
-  local sub_warning="" files_warning=""
-  local sub_rc=0 files_rc=0
-  local pid_sub pid_files
-
-  run_scan_subdirs_job "$tmp_sub" "$err_sub" "$warn_sub" &
-  pid_sub=$!
-  run_scan_top_files_job "$tmp_files" "$err_files" "$warn_files" &
-  pid_files=$!
-
-  wait "$pid_sub" || sub_rc=$?
-  wait "$pid_files" || files_rc=$?
-
-  (( sub_rc != 0 )) && { rm -f -- "$tmp_sub" "$err_sub" "$warn_sub" "$tmp_files" "$err_files" "$warn_files"; return "$sub_rc"; }
-  (( files_rc != 0 )) && { rm -f -- "$tmp_sub" "$err_sub" "$warn_sub" "$tmp_files" "$err_files" "$warn_files"; return "$files_rc"; }
-
-  sub_warning=$(cat -- "$warn_sub" 2>/dev/null)
-  files_warning=$(cat -- "$warn_files" 2>/dev/null)
-
-  local df_fields size used avail use_p mounted fields
-  if df_fields="$(get_df_fields)"; then
-    IFS=$'\t' read -r fields mounted <<< "$df_fields"
-    read -r size used avail use_p <<< "$fields"
-  else
-    size="?"
-    used="?"
-    avail="?"
-    use_p="?"
-    mounted="?"
+init_colors() {
+  if [[ "$NO_COLOR" -eq 0 && -t 1 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    MAGENTA='\033[0;35m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
   fi
-
-  echo "RAPPORT DISQUE - $(date)"
-  echo "Dossier                : $CURRENT_DIR"
-  echo "Mode analyse           : $(analysis_label)"
-  echo "Tri sous-dossiers      : $SORT_MODE"
-  echo "Mode taille fichiers   : $(file_size_label)"
-  echo "Profondeur max fichiers: $(depth_label)"
-  echo "Top sous-dossiers      : $TOP_COUNT"
-  echo "Top fichiers           : $TOP_FILES_COUNT"
-  print_exclusions_summary
-  echo "Partition              : $mounted"
-  [[ "$size" == "?" ]] && echo "Total                  : ?" || echo "Total                  : $(human_size "$size")"
-  [[ "$avail" == "?" ]] && echo "Libre                  : ?" || echo "Libre                  : $(human_size "$avail")"
-  echo "Occupation             : $use_p"
-  echo
-
-  if [[ -n "$sub_warning" || -n "$files_warning" ]]; then
-    PARTIAL_SCAN_DETECTED=1
-    echo "AVERTISSEMENTS :"
-    [[ -n "$sub_warning" ]] && echo "  - $sub_warning"
-    [[ -n "$files_warning" ]] && echo "  - $files_warning"
-    echo
-    LAST_WARNING="${sub_warning:-$files_warning}"
-  fi
-
-  echo "TOP SOUS-DOSSIERS :"
-  local found=0
-  local line ts full_path raw_size
-  if [[ "$SORT_MODE" == "mtime" ]]; then
-    while IFS= read -r -d '' line; do
-      ts="${line%%$'\t'*}"
-      full_path="${line#*$'\t'}"
-      [[ -z "$full_path" || "$full_path" == "$line" ]] && continue
-      printf '  %s  %s\n' "$(date_from_epoch "$ts")" "$(sanitize_for_display "$full_path")"
-      found=1
-    done < "$tmp_sub"
-  else
-    while IFS= read -r -d '' line; do
-      raw_size="${line%%$'\t'*}"
-      full_path="${line#*$'\t'}"
-      [[ -z "$full_path" || "$full_path" == "$line" ]] && continue
-      printf '  %12s  %s\n' "$(human_size "$raw_size")" "$(sanitize_for_display "$full_path")"
-      found=1
-    done < "$tmp_sub"
-  fi
-  (( found == 0 )) && echo "  (aucun)"
-
-  echo
-  echo "TOP FICHIERS :"
-  found=0
-  local value path size_bytes
-  while IFS= read -r -d '' line; do
-    value="${line%%$'\t'*}"
-    path="${line#*$'\t'}"
-    [[ -z "$path" || "$path" == "$line" ]] && continue
-
-    if [[ "$FILE_SIZE_MODE" == "apparent" ]]; then
-      size_bytes="$value"
-    else
-      size_bytes=$((value * 512))
-    fi
-
-    printf '  %12s  %s\n' "$(human_size "$size_bytes")" "$(sanitize_for_display "$path")"
-    found=1
-  done < "$tmp_files"
-  (( found == 0 )) && echo "  (aucun)"
-
-  rm -f -- "$tmp_sub" "$err_sub" "$warn_sub" "$tmp_files" "$err_files" "$warn_files"
 }
 
-print_tree_view() {
-  LAST_WARNING=""
+init_runtime_flags() {
+  if [[ -t 1 && "$NO_SPINNER" -eq 0 ]]; then
+    ENABLE_SPINNER=1
+  else
+    ENABLE_SPINNER=0
+  fi
 
-  local tmp_file err_file
-  tmp_file=$(make_temp_file) || return 1
-  err_file=$(make_temp_file) || return 1
-  : > "$tmp_file"
-  : > "$err_file"
+  if [[ "$RUN_MODE" == "interactive" && ( ! -t 0 || ! -t 1 ) ]]; then
+    RUN_MODE="summary"
+    ENABLE_SPINNER=0
+  fi
+}
 
-  local -a du_cmd
-  build_du_tree_cmd du_cmd
+init_numfmt_support() {
+  command -v "$NUMFMT_CMD" >/dev/null 2>&1 && HAVE_NUMFMT=1 || HAVE_NUMFMT=0
+}
 
-  "${du_cmd[@]}" >"$tmp_file" 2>"$err_file"
+check_runtime_requirements() {
+  (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )) || die "Bash >= 4.4 requis"
 
-  local job_rc=$?
-  update_scan_warning "$err_file" "Vue arborescente partielle possible" "$job_rc"
-  [[ -n "$SCAN_WARNING" ]] && echo "Avertissement: $SCAN_WARNING"
+  local required_cmd
+  # numfmt est optionnel : human_size() utilise un fallback awk si absent (voir HAVE_NUMFMT).
+  local -a required_cmds=(awk "$FIND_CMD" "$SORT_CMD" "$HEAD_CMD" "$DU_CMD" date mktemp df tail)
+  local -a missing_cmds=()
+  for required_cmd in "${required_cmds[@]}"; do
+    command -v "$required_cmd" >/dev/null 2>&1 || missing_cmds+=("$required_cmd")
+  done
 
-  echo "TREE SIZE VIEW (depth=${TREE_DEPTH}) - $CURRENT_DIR"
+  if ((${#missing_cmds[@]} > 0)); then
+    local os_id missing
+    os_id="$(detect_os_id)"
+    printf -v missing '%s ' "${missing_cmds[@]}"
+    missing="${missing% }"
+    # Sortie volontairement explicite pour réduire le temps de diagnostic.
+    echo "Erreur: commandes manquantes: $missing" >&2
+    echo "Suggestion d'installation ($os_id): $(install_hint "$os_id" "${missing_cmds[@]}")" >&2
+    exit 1
+  fi
 
-  declare -A tree_size_map=()
-  declare -A tree_children_map=()
-
-  local line raw_size full_path parent
-  while IFS= read -r -d '' line; do
-    raw_size="${line%%$'\t'*}"
-    full_path="${line#*$'\t'}"
-    [[ -z "$full_path" || "$full_path" == "$line" ]] && continue
-
-    tree_size_map["$full_path"]="$raw_size"
-
-    if [[ "$full_path" != "$CURRENT_DIR" ]]; then
-      parent="$(dirname -- "$full_path")"
-      if path_is_equal_or_within "$parent" "$CURRENT_DIR"; then
-        tree_children_map["$parent"]+="$full_path"$'\n'
-      fi
+  local req_dir
+  req_dir=$(mktemp -d "${TMPDIR:-/tmp}/disk-explorer.req.XXXXXX") || die "impossible de vérifier les prérequis runtime"
+  "$FIND_CMD" "$req_dir" -maxdepth 0 -printf '' >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU find avec -printf requis"; }
+  printf '%b' 'a\0' | "$SORT_CMD" -z >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU sort avec -z requis"; }
+  printf '%b' 'a\0' | "$HEAD_CMD" -z -n 1 >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU head avec -z requis"; }
+  "$DU_CMD" -0 --max-depth=0 "$req_dir" >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU du avec -0 requis"; }
+  {
+    if [[ "$PLATFORM" == "macos" ]]; then
+      date -r 0 '+%Y-%m-%d %H:%M' >/dev/null 2>&1
+    else
+      date -d '@0' '+%Y-%m-%d %H:%M' >/dev/null 2>&1
     fi
-  done < "$tmp_file"
+  } || { rm -rf -- "$req_dir"; die "date: support epoch non disponible"; }
+  rm -rf -- "$req_dir"
+}
 
-  if [[ -z "${tree_size_map["$CURRENT_DIR"]+x}" ]]; then
-    echo "Aucune donnée d'arborescence disponible."
-    rm -f -- "$tmp_file" "$err_file"
+resolve_gnu_tools_macos() {
+  local -a missing_tools=()
+  local -a brew_pkgs=()
+
+  _try_gnu_tool() {
+    local var="$1" gnu_name="$2" pkg="$3"
+    if command -v "$gnu_name" >/dev/null 2>&1; then
+      printf -v "$var" '%s' "$gnu_name"
+    elif command -v "${gnu_name#g}" >/dev/null 2>&1 && \
+         "${gnu_name#g}" --version 2>&1 | grep -q GNU; then
+      printf -v "$var" '%s' "${gnu_name#g}"
+    else
+      missing_tools+=("$gnu_name")
+      brew_pkgs+=("$pkg")
+    fi
+  }
+
+  _try_gnu_tool FIND_CMD  gfind   findutils
+  _try_gnu_tool SORT_CMD  gsort   coreutils
+  _try_gnu_tool HEAD_CMD  ghead   coreutils
+  _try_gnu_tool DU_CMD    gdu     coreutils
+  _try_gnu_tool NUMFMT_CMD gnumfmt coreutils
+
+  unset -f _try_gnu_tool
+
+  if (( ${#missing_tools[@]} == 0 )); then
     return 0
   fi
 
-  tree_percent_str() {
-    local child_size="$1"
-    local parent_size="$2"
-    local pct10=0
-    if (( parent_size > 0 )); then
-      pct10=$(( child_size * 1000 / parent_size ))
+  # Dedupliquer les paquets
+  local -A _seen=()
+  local -a unique_pkgs=()
+  local p
+  for p in "${brew_pkgs[@]}"; do
+    if [[ -z "${_seen[$p]+x}" ]]; then
+      _seen[$p]=1
+      unique_pkgs+=("$p")
     fi
-    printf '%d.%d%%' "$((pct10 / 10))" "$((pct10 % 10))"
-  }
+  done
 
-  tree_print_node() {
-    local node="$1"
-    local depth="$2"
-    local parent_size="$3"
-    local node_size="${tree_size_map[$node]}"
-    local rel indent pct
+  local missing_str
+  printf -v missing_str '%s ' "${missing_tools[@]}"
+  missing_str="${missing_str% }"
 
-    if [[ "$node" == "$CURRENT_DIR" ]]; then
-      rel="."
-      pct="100.0%"
-    else
-      rel="${node#"${CURRENT_DIR}/"}"
-      pct="$(tree_percent_str "$node_size" "$parent_size")"
-    fi
+  if ! command -v brew >/dev/null 2>&1; then
+    printf 'Erreur: outils GNU manquants: %s\n' "$missing_str" >&2
+    printf 'Homebrew requis. Installez-le depuis https://brew.sh puis relancez.\n' >&2
+    exit 1
+  fi
 
-    if (( depth > 0 )); then
-      printf -v indent '%*s' $(( (depth - 1) * 2 )) ''
-      printf '%12s  %7s  %s├── %s\n' "$(human_size "$node_size")" "$pct" "$indent" "$(sanitize_for_display "$rel")"
-    else
-      printf '%12s  %7s  %s\n' "$(human_size "$node_size")" "$pct" "$(sanitize_for_display "$rel")"
-    fi
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    printf 'Erreur: outils GNU manquants: %s\n' "$missing_str" >&2
+    printf 'Installez-les manuellement: brew install %s\n' "${unique_pkgs[*]}" >&2
+    exit 1
+  fi
 
-    local children_raw child
-    children_raw="${tree_children_map[$node]-}"
-    [[ -z "$children_raw" ]] && return 0
+  printf 'Outils GNU requis manquants: %s\n' "$missing_str" >&2
+  printf 'Installation via Homebrew: brew install %s\n' "${unique_pkgs[*]}" >&2
+  local answer
+  read -r -p "Installer maintenant ? [o/N] " answer
+  if [[ "${answer,,}" != "o" ]]; then
+    printf 'Installation annulee.\n' >&2
+    exit 1
+  fi
 
-    local -a sorted_children=()
-    mapfile -d '' -t sorted_children < <(
-      while IFS= read -r child; do
-        [[ -z "$child" ]] && continue
-        printf '%s\t%s\0' "${tree_size_map[$child]}" "$child"
-      done <<< "$children_raw" | LC_ALL=C "$SORT_CMD" -zrn | awk -v RS='\0' -v ORS='\0' -F '\t' '{sub(/^[^\t]*\t/, "", $0); print $0}'
-    )
+  HOMEBREW_NO_AUTO_UPDATE=1 brew install "${unique_pkgs[@]}" || die "echec de l'installation Homebrew"
 
-    local next_child
-    for next_child in "${sorted_children[@]}"; do
-      tree_print_node "$next_child" "$((depth + 1))" "$node_size"
-    done
-  }
+  # Re-verifier apres install
+  local tool
+  for tool in "${missing_tools[@]}"; do
+    command -v "$tool" >/dev/null 2>&1 || die "outil toujours manquant apres install: $tool"
+  done
 
-  tree_print_node "$CURRENT_DIR" 0 "${tree_size_map[$CURRENT_DIR]}"
-
-  rm -f -- "$tmp_file" "$err_file"
+  # Reappel pour fixer les variables CMD
+  resolve_gnu_tools_macos
 }
 
-# ================== MAIN ==================
+usage() {
+  cat <<'EOF2'
+Usage:
+  disk-explorer.sh [OPTIONS] [PATH]
+
+Options:
+  --path DIR                Dossier de départ
+  --mode MODE               partition | global
+  --sort MODE               size | mtime
+  --file-size MODE          real | apparent
+  --top-count N             Nombre de sous-dossiers affichés
+  --top-files N             Nombre de fichiers affichés
+  --max-depth N             Profondeur max du scan récursif des fichiers
+                            (0 = seulement le dossier courant, 1 = + sous-dossiers directs…)
+                            (-1 = illimité)
+                            Note : s'applique aux fichiers, pas à la vue sous-dossiers.
+                            Maximum accepté : 1024
+  --report                  Génère un rapport texte puis quitte
+  --summary                 Affiche un résumé puis quitte
+  --tree                    Affiche une vue arborescente type TreeSize puis quitte
+  --tree-depth N            Profondeur max de la vue arborescente (--tree)
+  --self-check              Vérifie la compatibilité runtime puis quitte
+  --interactive             Force le mode interactif (si TTY disponible)
+  --report-dir DIR          Dossier de sortie des rapports
+  --exclude PATH            Ajoute une exclusion (répétable)
+  --no-default-excludes     N'utilise pas les exclusions par défaut
+  --no-color                Désactive les couleurs
+  --no-spinner              Désactive le spinner
+  -h, --help                Aide
+
+Remarques:
+  - Le mode PARTITION/CENTREON reste sur le même filesystem.
+  - Le tri mtime des sous-dossiers repose sur la date du dossier lui-même,
+    pas sur l'activité récursive de tout son contenu.
+  - Le mode real/apparent concerne les fichiers ; la vue sous-dossiers repose
+    toujours sur l'occupation disque remontée par du.
+  - Ce script supporte GNU/Linux et macOS (GNU findutils, coreutils et Bash >= 4.4).
+  - Sur macOS, les outils GNU sont installés automatiquement via Homebrew si nécessaire.
+  - Les exclusions utilisateur sont traitées comme des chemins littéraux :
+    les métacaractères de glob (* ? [ ]) sont refusés.
+EOF2
+}
+
+parse_args() {
+  local positional_path_used=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --path)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --path"
+        CURRENT_DIR_INPUT="$1"
+        ;;
+      --mode)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --mode"
+        case "$1" in
+          partition|global) ANALYSIS_MODE="$1" ;;
+          *) die "--mode doit valoir partition ou global" ;;
+        esac
+        ;;
+      --sort)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --sort"
+        case "$1" in
+          size|mtime) SORT_MODE="$1" ;;
+          *) die "--sort doit valoir size ou mtime" ;;
+        esac
+        ;;
+      --file-size)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --file-size"
+        case "$1" in
+          real|apparent) FILE_SIZE_MODE="$1" ;;
+          *) die "--file-size doit valoir real ou apparent" ;;
+        esac
+        ;;
+      --top-count)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --top-count"
+        is_non_negative_int "$1" || die "--top-count doit être un entier >= 0"
+        (( $1 <= MAX_ALLOWED_RESULTS )) || die "--top-count doit être <= ${MAX_ALLOWED_RESULTS}"
+        TOP_COUNT="$1"
+        ;;
+      --top-files)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --top-files"
+        is_non_negative_int "$1" || die "--top-files doit être un entier >= 0"
+        (( $1 <= MAX_ALLOWED_RESULTS )) || die "--top-files doit être <= ${MAX_ALLOWED_RESULTS}"
+        TOP_FILES_COUNT="$1"
+        ;;
+      --max-depth)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --max-depth"
+        is_integer "$1" || die "--max-depth doit être un entier"
+        (( "$1" >= -1 )) || die "--max-depth doit être >= -1"
+        (( "$1" <= MAX_ALLOWED_DEPTH )) || die "--max-depth doit être <= ${MAX_ALLOWED_DEPTH}"
+        MAX_DEPTH="$1"
+        ;;
+      --report)
+        RUN_MODE="report"
+        ;;
+      --summary)
+        RUN_MODE="summary"
+        ;;
+      --tree)
+        RUN_MODE="tree"
+        ;;
+      --tree-depth)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --tree-depth"
+        is_non_negative_int "$1" || die "--tree-depth doit être un entier >= 0"
+        (( "$1" <= MAX_ALLOWED_DEPTH )) || die "--tree-depth doit être <= ${MAX_ALLOWED_DEPTH}"
+        TREE_DEPTH="$1"
+        ;;
+      --self-check)
+        SELF_CHECK_ONLY=1
+        ;;
+      --interactive)
+        RUN_MODE="interactive"
+        ;;
+      --report-dir)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --report-dir"
+        REPORT_DIR="$1"
+        ;;
+      --exclude)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --exclude"
+        EXTRA_EXCLUDED_DIRS+=("$1")
+        ;;
+      --no-default-excludes)
+        USE_DEFAULT_EXCLUDES=0
+        ;;
+      --no-color)
+        NO_COLOR=1
+        ;;
+      --no-spinner)
+        NO_SPINNER=1
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --)
+        shift
+        # Convention POSIX : tout ce qui suit -- est positionnel, pas une option.
+        while [[ $# -gt 0 ]]; do
+          if (( positional_path_used == 0 )); then
+            CURRENT_DIR_INPUT="$1"
+            positional_path_used=1
+          else
+            die "trop d'arguments positionnels"
+          fi
+          shift
+        done
+        break
+        ;;
+      -*)
+        die "option inconnue : $1"
+        ;;
+      *)
+        if (( positional_path_used == 0 )); then
+          CURRENT_DIR_INPUT="$1"
+          positional_path_used=1
+        else
+          die "trop d'arguments positionnels"
+        fi
+        ;;
+    esac
+    shift
+  done
+}
 
 main() {
   parse_args "$@"
