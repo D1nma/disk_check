@@ -876,7 +876,7 @@ get_df_fields() {
     read -r size used avail usep mounted <<< "$df_out"
   fi
 
-  printf '%s %s %s %s %s\n' "$size" "$used" "$avail" "$usep" "$mounted"
+  printf '%s %s %s %s\t%s\n' "$size" "$used" "$avail" "$usep" "$mounted"
 }
 
 build_du_cmd() {
@@ -1269,8 +1269,9 @@ show_header() {
 
   local df_fields
   if df_fields="$(get_df_fields)"; then
-    local size used avail use_p mounted use_pct
-    read -r size used avail use_p mounted <<< "$df_fields"
+    local size used avail use_p mounted use_pct fields
+    IFS=$'\t' read -r fields mounted <<< "$df_fields"
+    read -r size used avail use_p <<< "$fields"
     use_pct="${use_p%\%}"
 
     local color=$GREEN
@@ -1560,9 +1561,10 @@ print_summary() {
   sub_warning=$(cat -- "$warn_sub" 2>/dev/null)
   files_warning=$(cat -- "$warn_files" 2>/dev/null)
 
-  local df_fields size used avail use_p mounted
+  local df_fields size used avail use_p mounted fields
   if df_fields="$(get_df_fields)"; then
-    read -r size used avail use_p mounted <<< "$df_fields"
+    IFS=$'\t' read -r fields mounted <<< "$df_fields"
+    read -r size used avail use_p <<< "$fields"
   else
     size="?"
     used="?"
