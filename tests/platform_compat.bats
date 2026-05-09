@@ -105,15 +105,52 @@ _mock_df_pk() {
 
 # ── date_from_epoch ───────────────────────────────────────────────
 
+_make_date_stub() {
+    local stub_dir
+    stub_dir="$(mktemp -d)"
+    cat > "$stub_dir/date" << 'STUBEOF'
+#!/usr/bin/env bash
+# Stub: translate GNU "date -d @epoch fmt" to BSD "date -r epoch fmt"
+args=("$@")
+new_args=()
+i=0
+while (( i < ${#args[@]} )); do
+    arg="${args[$i]}"
+    if [[ "$arg" == "-d" ]]; then
+        (( i++ ))
+        val="${args[$i]}"
+        if [[ "$val" == @* ]]; then
+            epoch="${val#@}"
+            new_args+=("-r" "${epoch%.*}")
+        else
+            new_args+=("-d" "$val")
+        fi
+    else
+        new_args+=("$arg")
+    fi
+    (( i++ ))
+done
+exec /bin/date "${new_args[@]}"
+STUBEOF
+    chmod +x "$stub_dir/date"
+    echo "$stub_dir"
+}
+
 @test "date_from_epoch: epoch 0 sur linux produit une date valide" {
     PLATFORM="linux"
-    result=$(date_from_epoch "0")
+    local stub_dir
+    stub_dir="$(_make_date_stub)"
+    result=$(PATH="$stub_dir:$PATH" date_from_epoch "0")
+    rm -rf "$stub_dir"
     [[ "$result" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}$ ]]
 }
 
 @test "date_from_epoch: accepte un timestamp flottant (strip .xxx)" {
     PLATFORM="linux"
-    result=$(date_from_epoch "1700000000.5")
+    local stub_dir
+    stub_dir="$(_make_date_stub)"
+    result=$(PATH="$stub_dir:$PATH" date_from_epoch "1700000000.5")
+    rm -rf "$stub_dir"
     [[ "$result" != "?" ]]
     [[ "$result" =~ ^[0-9]{4} ]]
 }
