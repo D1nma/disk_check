@@ -123,7 +123,8 @@ Remarques:
     pas sur l'activité récursive de tout son contenu.
   - Le mode real/apparent concerne les fichiers ; la vue sous-dossiers repose
     toujours sur l'occupation disque remontée par du.
-  - Ce script vise GNU/Linux (GNU findutils, coreutils et Bash >= 4.3).
+  - Ce script supporte GNU/Linux et macOS (GNU findutils, coreutils et Bash >= 4.4).
+  - Sur macOS, les outils GNU sont installés automatiquement via Homebrew si nécessaire.
   - Les exclusions utilisateur sont traitées comme des chemins littéraux :
     les métacaractères de glob (* ? [ ]) sont refusés.
 EOF2
@@ -229,9 +230,7 @@ init_numfmt_support() {
 }
 
 check_runtime_requirements() {
-  # Ce script est explicitement GNU/Linux-only (GNU findutils/coreutils).
-  [[ "${OSTYPE:-}" == linux* ]] || die "GNU/Linux requis (OSTYPE détecté: ${OSTYPE:-inconnu})"
-  (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 3) )) || die "Bash >= 4.3 requis"
+  (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )) || die "Bash >= 4.4 requis"
 
   local required_cmd
   local -a required_cmds=(awk find sort head du date mktemp df tail)
@@ -263,32 +262,46 @@ check_runtime_requirements() {
 
 self_check_report() {
   local -i rc=0
-  local required_cmd
-  local -a required_cmds=(awk find sort head du date mktemp df tail)
   local -a missing_cmds=()
 
   echo "=== DISK EXPLORER :: SELF-CHECK ==="
 
-  if [[ "${OSTYPE:-}" == linux* ]]; then
-    echo "[OK] Plateforme Linux détectée (${OSTYPE:-unknown})"
+  case "${PLATFORM:-}" in
+    linux)  echo "[OK] Plateforme Linux détectée (${OSTYPE:-unknown})" ;;
+    macos)  echo "[OK] Plateforme macOS détectée (${OSTYPE:-unknown})" ;;
+    *)      echo "[KO] Plateforme non reconnue (${OSTYPE:-unknown})"; rc=1 ;;
+  esac
+
+  if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )); then
+    echo "[OK] Bash >= 4.4 (${BASH_VERSION})"
   else
-    echo "[KO] Plateforme non supportée (${OSTYPE:-unknown})"
+    echo "[KO] Bash >= 4.4 requis (actuel: ${BASH_VERSION})"
     rc=1
   fi
 
-  if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 3) )); then
-    echo "[OK] Bash >= 4.3 (${BASH_VERSION})"
-  else
-    echo "[KO] Bash >= 4.3 requis (actuel: ${BASH_VERSION})"
-    rc=1
-  fi
-
-  for required_cmd in "${required_cmds[@]}"; do
-    if command -v "$required_cmd" >/dev/null 2>&1; then
-      echo "[OK] Commande présente: $required_cmd"
+  local -A _cmd_map=(
+    [awk]="awk"
+    [find]="$FIND_CMD"
+    [sort]="$SORT_CMD"
+    [head]="$HEAD_CMD"
+    [du]="$DU_CMD"
+    [date]="date"
+    [mktemp]="mktemp"
+    [df]="df"
+    [tail]="tail"
+  )
+  local canonical resolved
+  for canonical in awk find sort head du date mktemp df tail; do
+    resolved="${_cmd_map[$canonical]}"
+    if command -v "$resolved" >/dev/null 2>&1; then
+      if [[ "$resolved" != "$canonical" ]]; then
+        echo "[OK] Commande présente: $resolved (→ $canonical)"
+      else
+        echo "[OK] Commande présente: $resolved"
+      fi
     else
-      echo "[KO] Commande manquante: $required_cmd"
-      missing_cmds+=("$required_cmd")
+      echo "[KO] Commande manquante: $resolved"
+      missing_cmds+=("$resolved")
       rc=1
     fi
   done
@@ -329,10 +342,16 @@ self_check_report() {
       echo "[KO] GNU du: -0 non supporté"
       rc=1
     fi
-    if date -d '@0' '+%Y-%m-%d %H:%M' >/dev/null 2>&1; then
-      echo "[OK] GNU date: support -d"
+    local _date_ok=0
+    if [[ "$PLATFORM" == "macos" ]]; then
+      date -r 0 '+%Y-%m-%d %H:%M' >/dev/null 2>&1 && _date_ok=1
     else
-      echo "[KO] GNU date: -d non supporté"
+      date -d '@0' '+%Y-%m-%d %H:%M' >/dev/null 2>&1 && _date_ok=1
+    fi
+    if (( _date_ok )); then
+      echo "[OK] GNU/BSD date: support epoch"
+    else
+      echo "[KO] date: support epoch non disponible"
       rc=1
     fi
 
