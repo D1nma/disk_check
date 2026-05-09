@@ -30,7 +30,7 @@ awk '
   found || /^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*\(\)/ { found=1; print }
 ' "$SCRIPT_DIR/src/main.sh" >> "$TMP"
 
-chmod +x "$TMP"
+chmod 755 "$TMP"
 bash -n "$TMP" || { echo "ERREUR: syntaxe invalide dans le fichier généré" >&2; exit 1; }
 mv "$TMP" "$OUT"
 echo "Build OK → $OUT"
