@@ -233,6 +233,7 @@ check_runtime_requirements() {
   (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )) || die "Bash >= 4.4 requis"
 
   local required_cmd
+  # numfmt est optionnel : human_size() utilise un fallback awk si absent (voir HAVE_NUMFMT).
   local -a required_cmds=(awk "$FIND_CMD" "$SORT_CMD" "$HEAD_CMD" "$DU_CMD" date mktemp df tail)
   local -a missing_cmds=()
   for required_cmd in "${required_cmds[@]}"; do
