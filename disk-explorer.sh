@@ -233,7 +233,7 @@ check_runtime_requirements() {
   (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )) || die "Bash >= 4.4 requis"
 
   local required_cmd
-  local -a required_cmds=(awk find sort head du date mktemp df tail)
+  local -a required_cmds=(awk "$FIND_CMD" "$SORT_CMD" "$HEAD_CMD" "$DU_CMD" date mktemp df tail)
   local -a missing_cmds=()
   for required_cmd in "${required_cmds[@]}"; do
     command -v "$required_cmd" >/dev/null 2>&1 || missing_cmds+=("$required_cmd")
@@ -256,7 +256,13 @@ check_runtime_requirements() {
   printf '%b' 'a\0' | "$SORT_CMD" -z >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU sort avec -z requis"; }
   printf '%b' 'a\0' | "$HEAD_CMD" -z -n 1 >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU head avec -z requis"; }
   "$DU_CMD" -0 --max-depth=0 "$req_dir" >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU du avec -0 requis"; }
-  date -d '@0' '+%Y-%m-%d %H:%M' >/dev/null 2>&1 || { rm -rf -- "$req_dir"; die "GNU date avec -d requis"; }
+  {
+    if [[ "$PLATFORM" == "macos" ]]; then
+      date -r 0 '+%Y-%m-%d %H:%M' >/dev/null 2>&1
+    else
+      date -d '@0' '+%Y-%m-%d %H:%M' >/dev/null 2>&1
+    fi
+  } || { rm -rf -- "$req_dir"; die "date: support epoch non disponible"; }
   rm -rf -- "$req_dir"
 }
 
@@ -285,13 +291,14 @@ self_check_report() {
     [sort]="$SORT_CMD"
     [head]="$HEAD_CMD"
     [du]="$DU_CMD"
+    [numfmt]="$NUMFMT_CMD"
     [date]="date"
     [mktemp]="mktemp"
     [df]="df"
     [tail]="tail"
   )
   local canonical resolved
-  for canonical in awk find sort head du date mktemp df tail; do
+  for canonical in awk find sort head du numfmt date mktemp df tail; do
     resolved="${_cmd_map[$canonical]}"
     if command -v "$resolved" >/dev/null 2>&1; then
       if [[ "$resolved" != "$canonical" ]]; then
