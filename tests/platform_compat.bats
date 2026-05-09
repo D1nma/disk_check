@@ -154,3 +154,20 @@ STUBEOF
     [[ "$result" != "?" ]]
     [[ "$result" =~ ^[0-9]{4} ]]
 }
+
+# ── Variables CMD initialisées ────────────────────────────────────
+
+@test "CMD variables: initialisées avec des valeurs non vides" {
+    [ -n "$FIND_CMD" ]
+    [ -n "$SORT_CMD" ]
+    [ -n "$HEAD_CMD" ]
+    [ -n "$DU_CMD" ]
+    [ -n "$NUMFMT_CMD" ]
+}
+
+@test "CMD variables: PLATFORM initialisée (vide avant detect_platform)" {
+    # Avant detect_platform(), PLATFORM est ""
+    # Après source, les variables globales sont définies
+    # [ -v PLATFORM ] nécessite Bash 4.2+; on utilise une forme portable
+    [[ "${PLATFORM+x}" == "x" ]]  # la variable existe (même si vide)
+}
