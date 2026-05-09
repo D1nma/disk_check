@@ -51,7 +51,7 @@ resolve_path_lexical() {
 }
 
 init_temp_root() {
-  TEMP_ROOT="$(mktemp -d \"${TMPDIR:-/tmp}/disk-explorer.XXXXXX\")" || die "impossible de créer le répertoire temporaire"
+  TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/disk-explorer.XXXXXX")" || die "impossible de créer le répertoire temporaire"
 }
 
 make_temp_file() {
