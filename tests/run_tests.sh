@@ -67,6 +67,54 @@ assert_true '
   [[ -z "$key" ]]
 ' "read_key: retourne chaine vide si stdin est fermé"
 
+echo -e "\nRunning tests for cursor navigation..."
+
+# Helper portable : crée N chemins sans seq -f (incompatible macOS sans GNU seq)
+_make_paths() {
+  local n="$1" i; for (( i=1; i<=n; i++ )); do printf '/dir%d\n' "$i"; done
+}
+
+# Charge N chemins dans SUBDIR_PATHS sans mapfile (absent de bash 3.x/macOS)
+_load_paths() {
+  local n="$1"
+  SUBDIR_PATHS=()
+  local i
+  for (( i=1; i<=n; i++ )); do SUBDIR_PATHS+=("/dir$i"); done
+}
+
+assert_true '
+  CURSOR=0; SCROLL_OFFSET=0
+  _load_paths 3; LINES=10
+  cursor_down; [[ "$CURSOR" -eq 1 ]]
+' "cursor_down: incrémente CURSOR"
+
+assert_true '
+  CURSOR=0; SCROLL_OFFSET=0
+  _load_paths 3; LINES=10
+  cursor_up; [[ "$CURSOR" -eq 0 ]]
+' "cursor_up: ne descend pas sous 0"
+
+assert_true '
+  CURSOR=2; SCROLL_OFFSET=0
+  _load_paths 3; LINES=10
+  cursor_down; [[ "$CURSOR" -eq 2 ]]
+' "cursor_down: ne dépasse pas le dernier élément"
+
+assert_true '
+  CURSOR=0; SCROLL_OFFSET=0
+  _load_paths 20; LINES=10
+  # visible = LINES - 6 = 4 ; descendre jusqu'"'"'à ce que SCROLL_OFFSET bouge
+  for _i in $(seq 4); do cursor_down; done
+  [[ "$SCROLL_OFFSET" -eq 1 ]]
+' "cursor_down: scroll quand curseur dépasse la zone visible"
+
+assert_true '
+  CURSOR=3; SCROLL_OFFSET=2
+  _load_paths 20; LINES=10
+  cursor_up; cursor_up; cursor_up
+  [[ "$SCROLL_OFFSET" -eq 0 ]]
+' "cursor_up: déscroll quand curseur remonte au-dessus du viewport"
+
 echo -e "\nSummary: $total tests, $((total - failed)) passed, $failed failed."
 
 if [ $failed -ne 0 ]; then

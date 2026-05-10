@@ -547,6 +547,27 @@ draw_footer() {
   printf '%s\n' "$(_tui_pad "$f2" "$COLUMNS")"
 }
 
+# ── Curseur ────────────────────────────────────────────────────────────────
+
+cursor_up() {
+  (( CURSOR > 0 )) && (( CURSOR-- )) || true
+  (( CURSOR < SCROLL_OFFSET )) && (( SCROLL_OFFSET-- )) || true
+}
+
+cursor_down() {
+  local visible=$(( LINES - 6 ))
+  (( visible < 1 )) && visible=1
+  local last=$(( ${#SUBDIR_PATHS[@]} - 1 ))
+  (( last < 0 )) && return
+  (( CURSOR < last )) && (( CURSOR++ )) || true
+  (( CURSOR >= SCROLL_OFFSET + visible )) && (( SCROLL_OFFSET++ )) || true
+}
+
+cursor_reset() {
+  CURSOR=0
+  SCROLL_OFFSET=0
+}
+
 # ── Redessin complet ──────────────────────────────────────────────────────
 
 tui_draw() {
