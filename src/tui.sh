@@ -414,9 +414,9 @@ tui_exit() {
 }
 
 tui_enter() {
-  tput smcup
-  tput civis
-  stty -echo raw
+  tput smcup 2>/dev/null || true
+  tput civis 2>/dev/null || true
+  stty -echo raw 2>/dev/null || true
   trap 'tui_exit; cleanup' EXIT
   trap '_NEEDS_REDRAW=1' SIGWINCH
 }
@@ -552,7 +552,7 @@ draw_footer() {
   local f1="  [↑↓] naviguer  [Entrée] ouvrir  [1-$n] accès direct  [0] retour"
   local f2="  [s] tri  [a] taille  [f] fichiers  [r] rapport  [h] aide  [c] config  [q] quitter"
   printf '%s\n' "$(_tui_pad "$f1" "$COLUMNS")"
-  printf '%s\n' "$(_tui_pad "$f2" "$COLUMNS")"
+  printf '%s' "$(_tui_pad "$f2" "$COLUMNS")"
 }
 
 # ── Curseur ────────────────────────────────────────────────────────────────
