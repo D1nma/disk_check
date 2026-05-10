@@ -30,6 +30,24 @@ assert_false() {
     fi
 }
 
+echo "Running build smoke tests..."
+
+assert_true '
+  (cd "$(dirname "$0")/.." && ./build.sh >/dev/null 2>&1 && bash -n disk-explorer.sh)
+' "build.sh: produit un fichier syntaxiquement valide"
+
+assert_true '
+  "$(dirname "$0")/../disk-explorer.sh" --self-check >/dev/null 2>&1
+' "disk-explorer.sh --self-check: exit 0"
+
+assert_true '
+  "$(dirname "$0")/../disk-explorer.sh" --summary /tmp >/dev/null 2>&1
+' "disk-explorer.sh --summary /tmp: exit 0"
+
+assert_true '
+  echo "" | "$(dirname "$0")/../disk-explorer.sh" /tmp >/dev/null 2>&1
+' "disk-explorer.sh: bascule en summary quand stdin n'est pas un TTY"
+
 echo "Running tests for is_integer..."
 assert_true "is_integer 123" "is_integer: positive integer"
 assert_true "is_integer 0" "is_integer: zero"
@@ -114,6 +132,21 @@ assert_true '
   cursor_up; cursor_up; cursor_up
   [[ "$SCROLL_OFFSET" -eq 0 ]]
 ' "cursor_up: déscroll quand curseur remonte au-dessus du viewport"
+
+echo -e "\nRunning tests for draw_list..."
+
+assert_true '
+  LINES=24; COLUMNS=80
+  CURRENT_DIR="/tmp"
+  SUBDIR_PATHS=("/tmp/a" "/tmp/b" "/tmp/c")
+  SUBDIR_DATA=("1024" "2048" "512")
+  SORT_MODE="size"
+  CURSOR=0; SCROLL_OFFSET=0
+  output="$(draw_list 2>/dev/null)"
+  visible=$(( LINES - 6 ))
+  line_count=$(printf "%s" "$output" | wc -l)
+  (( line_count == visible ))
+' "draw_list: produit exactement LINES-6 lignes (18 pour LINES=24)"
 
 echo -e "\nSummary: $total tests, $((total - failed)) passed, $failed failed."
 
