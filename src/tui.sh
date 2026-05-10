@@ -3,11 +3,19 @@
 
 pause_screen() {
   echo
-  read -r -p "Appuyez sur Entrée..." || true
+  if [[ "$TUI_CAPABLE" -eq 1 ]]; then
+    printf '  Appuyez sur une touche…'
+    stty echo cooked 2>/dev/null || true
+    read -r -s -n1 2>/dev/null || true
+    echo
+    stty -echo raw 2>/dev/null || true
+  else
+    read -r -p "Appuyez sur Entrée…" || true
+  fi
 }
 
 show_help_screen() {
-  [[ -t 1 ]] && clear
+  [[ "$TUI_CAPABLE" -eq 0 && -t 1 ]] && clear
   cat <<EOF2
 ${BOLD}${BLUE}AIDE - DISK EXPLORER${NC}
 
@@ -51,7 +59,7 @@ EOF2
 }
 
 show_exclusions_screen() {
-  [[ -t 1 ]] && clear
+  [[ "$TUI_CAPABLE" -eq 0 && -t 1 ]] && clear
   echo -e "${BOLD}${BLUE}EXCLUSIONS CONFIGURÉES${NC}"
   echo
   if ((${#EXCLUDED_DIRS[@]} == 0)); then
@@ -110,7 +118,7 @@ remove_exclusion_interactive() {
     return 0
   fi
 
-  [[ -t 1 ]] && clear
+  [[ "$TUI_CAPABLE" -eq 0 && -t 1 ]] && clear
   echo -e "${BOLD}${BLUE}SUPPRIMER UNE EXCLUSION${NC}"
   echo
 
@@ -196,7 +204,7 @@ set_max_depth_interactive() {
 config_menu() {
   local choice
   while true; do
-    [[ -t 1 ]] && clear
+    [[ "$TUI_CAPABLE" -eq 0 && -t 1 ]] && clear
     echo -e "${BOLD}${BLUE}CONFIGURATION${NC}"
     echo
     echo "  1) Mode analyse        : $(analysis_label)"
@@ -344,7 +352,7 @@ show_heavy_subdirs() {
 show_heavy_files() {
   LAST_WARNING=""
 
-  [[ -t 1 ]] && clear
+  [[ "$TUI_CAPABLE" -eq 0 && -t 1 ]] && clear
   echo -e "${BOLD}${BLUE}===== TOP FILES (Récursif) =====${NC}"
   echo -e "Source : ${YELLOW}${CURRENT_DIR}${NC}"
   echo -e "Mode analyse : ${CYAN}$(analysis_label)${NC}"
@@ -590,7 +598,7 @@ tui_draw() {
   _NEEDS_REDRAW=0   # remis à 0 APRÈS le dessin complet
 }
 
-navigate() {
+navigate_legacy() {
   while true; do
     show_header
     show_heavy_subdirs
@@ -601,7 +609,7 @@ navigate() {
     echo -e "  [f] Top Fichiers      [e] Exclusions   [r] Rapport      [h/?] Aide      [c] Config      [q] Quitter"
     echo -e "${DIM}──────────────────────────────────────────────────────────${NC}"
 
-    local choice idx target candidate prev_dir
+    local choice idx target prev_dir
     read -r -p "Action > " choice || { echo; exit 0; }
 
     case "${choice,,}" in
@@ -656,6 +664,155 @@ navigate() {
         else
           LAST_WARNING="commande invalide"
         fi
+        ;;
+    esac
+  done
+}
+
+# Recharge SUBDIR_PATHS/SUBDIR_DATA en relançant le scan.
+# Si le scan échoue, SUBDIR_PATHS reste vide et LAST_WARNING est positionné.
+_tui_reload_subdirs() {
+  LAST_WARNING=""
+  SUBDIR_PATHS=()
+  SUBDIR_DATA=()
+  show_heavy_subdirs >/dev/null 2>/dev/null || {
+    LAST_WARNING="erreur lors du scan des sous-dossiers"
+  }
+}
+
+# Lance un écran secondaire dans le buffer alternatif actif.
+# Restaure cooked avant l'appel (pour les read -r -p dans config/exclusions).
+# Force _NEEDS_REDRAW=1 au retour pour que la vue principale se redessine.
+_tui_secondary_screen() {
+  local fn="$1"
+  shift
+  stty echo cooked 2>/dev/null || true
+  tput cup 0 0 2>/dev/null || true
+  tput ed      2>/dev/null || true
+  "$fn" "$@"
+  stty -echo raw 2>/dev/null || true
+  _NEEDS_REDRAW=1
+}
+
+_tui_show_report_result() {
+  echo
+  if [[ -n "$LAST_WARNING" ]]; then
+    printf '%s\n' "$LAST_WARNING"
+  else
+    echo "Rapport généré."
+  fi
+  pause_screen
+}
+
+# ── Boucle principale TUI ─────────────────────────────────────────────────
+
+navigate() {
+  tui_check_capability
+  if [[ "$TUI_CAPABLE" -eq 0 ]]; then
+    navigate_legacy
+    return
+  fi
+
+  _tui_reload_subdirs
+  tui_enter
+  _NEEDS_REDRAW=1
+
+  while true; do
+    [[ "$_NEEDS_REDRAW" -eq 1 ]] && tui_draw
+
+    local key
+    key=$(read_key)
+
+    case "$key" in
+      # Flèches
+      $'\x1b[A') cursor_up  ; _NEEDS_REDRAW=1 ;;
+      $'\x1b[B') cursor_down; _NEEDS_REDRAW=1 ;;
+
+      # Entrée : ouvrir le dossier sous le curseur
+      $'\n'|$'\r')
+        if (( ${#SUBDIR_PATHS[@]} > 0 && CURSOR < ${#SUBDIR_PATHS[@]} )); then
+          local target="${SUBDIR_PATHS[$CURSOR]}"
+          local prev_dir="$CURRENT_DIR"
+          if set_current_dir "$target"; then
+            _tui_reload_subdirs
+            cursor_reset
+          else
+            LAST_WARNING="navigation impossible vers ce dossier"
+            CURRENT_DIR="$prev_dir"
+          fi
+          _NEEDS_REDRAW=1
+        fi
+        ;;
+
+      # Retour arrière
+      0)
+        if [[ "$CURRENT_DIR" != "/" ]]; then
+          local prev_dir="$CURRENT_DIR"
+          if set_current_dir "$(dirname -- "$CURRENT_DIR")"; then
+            _tui_reload_subdirs
+            cursor_reset
+          else
+            LAST_WARNING="retour arrière impossible"
+            CURRENT_DIR="$prev_dir"
+          fi
+          _NEEDS_REDRAW=1
+        fi
+        ;;
+
+      # Accès direct par numéro (1-9)
+      [1-9])
+        local idx=$(( key - 1 ))
+        if [[ -n "${SUBDIR_PATHS[$idx]-}" ]]; then
+          local target="${SUBDIR_PATHS[$idx]}"
+          local prev_dir="$CURRENT_DIR"
+          if set_current_dir "$target"; then
+            _tui_reload_subdirs
+            cursor_reset
+          else
+            LAST_WARNING="navigation impossible"
+            CURRENT_DIR="$prev_dir"
+          fi
+        else
+          LAST_WARNING="sélection hors plage"
+        fi
+        _NEEDS_REDRAW=1
+        ;;
+
+      s|S)
+        [[ "$SORT_MODE" == "size" ]] && SORT_MODE="mtime" || SORT_MODE="size"
+        _tui_reload_subdirs; cursor_reset; _NEEDS_REDRAW=1
+        ;;
+      a|A)
+        [[ "$FILE_SIZE_MODE" == "real" ]] && FILE_SIZE_MODE="apparent" || FILE_SIZE_MODE="real"
+        _NEEDS_REDRAW=1
+        ;;
+      p|P)
+        [[ "$ANALYSIS_MODE" == "partition" ]] && ANALYSIS_MODE="global" || ANALYSIS_MODE="partition"
+        _tui_reload_subdirs; cursor_reset; _NEEDS_REDRAW=1
+        ;;
+      f|F)
+        _tui_secondary_screen show_heavy_files
+        ;;
+      r|R)
+        generate_report_file || true
+        _tui_secondary_screen _tui_show_report_result
+        ;;
+      h|H|'?')
+        _tui_secondary_screen show_help_screen
+        ;;
+      c|C)
+        _tui_secondary_screen config_menu
+        _tui_reload_subdirs; cursor_reset
+        ;;
+      e|E)
+        _tui_secondary_screen show_exclusions_screen
+        ;;
+      q|Q)
+        tui_exit
+        exit 0
+        ;;
+      '')
+        # Timeout read_key — pas de touche, vérifier _NEEDS_REDRAW au prochain tour
         ;;
     esac
   done
