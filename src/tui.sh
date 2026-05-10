@@ -399,6 +399,7 @@ tui_check_capability() {
 }
 
 tui_exit() {
+  trap - SIGWINCH
   stty echo cooked 2>/dev/null || true
   tput cnorm 2>/dev/null || true
   tput rmcup 2>/dev/null || true
@@ -408,7 +409,7 @@ tui_enter() {
   tput smcup
   tput civis
   stty -echo raw
-  trap tui_exit EXIT
+  trap 'tui_exit; cleanup' EXIT
   trap '_NEEDS_REDRAW=1' SIGWINCH
 }
 
