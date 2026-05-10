@@ -284,7 +284,8 @@ process_line_display() {
 
   local rel_path="${full_path#"${CURRENT_DIR}/"}"
   [[ -z "$rel_path" || "$rel_path" == "$full_path" ]] && rel_path=$(basename -- "$full_path")
-  SUBDIR_PATHS+=("$rel_path")
+  SUBDIR_PATHS+=("$full_path")
+  SUBDIR_DATA+=("$raw_data")
 
   local display_metric
   if [[ "$mode" == "size" ]]; then
@@ -305,6 +306,7 @@ process_line_display() {
 
 show_heavy_subdirs() {
   SUBDIR_PATHS=()
+  SUBDIR_DATA=()
   LAST_WARNING=""
 
   local tmp_file err_file
@@ -383,6 +385,189 @@ show_heavy_files() {
   pause_screen
 }
 
+# ======================================================================
+# === TUI CORE ===
+# ======================================================================
+
+# Teste si le terminal supporte smcup sans aucun effet visible (stdout→/dev/null).
+tui_check_capability() {
+  if tput smcup >/dev/null 2>&1 && tput rmcup >/dev/null 2>&1; then
+    TUI_CAPABLE=1
+  else
+    TUI_CAPABLE=0
+  fi
+}
+
+tui_exit() {
+  stty echo cooked 2>/dev/null || true
+  tput cnorm 2>/dev/null || true
+  tput rmcup 2>/dev/null || true
+}
+
+tui_enter() {
+  tput smcup
+  tput civis
+  stty -echo raw
+  trap tui_exit EXIT
+  trap '_NEEDS_REDRAW=1' SIGWINCH
+}
+
+# Lit une touche ou séquence d'échappement.
+# Retourne "" sur timeout (0.2 s) pour permettre la vérification de _NEEDS_REDRAW.
+read_key() {
+  local key seq
+  IFS= read -r -s -t 0.2 -n1 key 2>/dev/null || true
+  if [[ "$key" == $'\x1b' ]]; then
+    IFS= read -r -s -t 0.1 -n5 seq 2>/dev/null || true
+    key="${key}${seq}"
+  fi
+  printf '%s' "$key"
+}
+
+# ── Utilitaires de rendu ───────────────────────────────────────────────────
+
+# Tronque/padde $1 à exactement $2 caractères visibles (pas de sequences ANSI).
+_tui_pad() {
+  local str="$1"
+  local width="$2"
+  local vis="${str:0:$width}"
+  printf "%-${width}s" "$vis"
+}
+
+# ── En-tête (2 lignes + 1 séparateur) ────────────────────────────────────
+
+draw_header() {
+  local df_fields size used avail use_p mounted fields
+  if df_fields="$(get_df_fields 2>/dev/null)"; then
+    IFS=$'\t' read -r fields mounted <<< "$df_fields"
+    read -r size used avail use_p <<< "$fields"
+  else
+    size=0; used=0; avail=0; use_p="?%"; mounted="?"
+  fi
+
+  # Ligne 1 : titre + chemin + mode
+  local line1_plain="DISK EXPLORER  ${CURRENT_DIR}  $(analysis_label) · $SORT_MODE"
+  printf '%s\n' "$(_tui_pad "$line1_plain" "$COLUMNS")"
+
+  # Ligne 2 : barre de progression
+  local use_int="${use_p//[^0-9]/}"
+  local bar_width=$(( COLUMNS * 20 / 100 ))
+  (( bar_width < 5 )) && bar_width=5
+  local bar_fill=$(( bar_width * ${use_int:-0} / 100 ))
+  (( bar_fill > bar_width )) && bar_fill=$bar_width
+  local bar_empty=$(( bar_width - bar_fill ))
+  local bar=""
+  local i
+  for (( i=0; i<bar_fill;  i++ )); do bar+="█"; done
+  for (( i=0; i<bar_empty; i++ )); do bar+="░"; done
+  local avail_h used_h total_h
+  [[ "$avail" =~ ^[0-9]+$ ]] && avail_h="$(human_size "$avail")" || avail_h="?"
+  [[ "$used"  =~ ^[0-9]+$ ]] && used_h="$(human_size "$used")"   || used_h="?"
+  [[ "$size"  =~ ^[0-9]+$ ]] && total_h="$(human_size "$size")"  || total_h="?"
+  local warn_suffix=""
+  [[ -n "$LAST_WARNING" ]] && warn_suffix="  ⚠ $(sanitize_for_display "$LAST_WARNING")"
+  local line2_plain="${bar} ${use_p}  ${used_h} / ${total_h}${warn_suffix}"
+  printf '%s\n' "$(_tui_pad "$line2_plain" "$COLUMNS")"
+
+  # Séparateur haut
+  local sep=""
+  for (( i=0; i<COLUMNS; i++ )); do sep+="─"; done
+  printf '%s\n' "${sep:0:$COLUMNS}"
+}
+
+# ── Zone liste avec viewport et curseur ──────────────────────────────────
+
+draw_list() {
+  local visible=$(( LINES - 6 ))
+  (( visible < 1 )) && visible=1
+  local total=${#SUBDIR_PATHS[@]}
+  local i row=0
+
+  for (( i=SCROLL_OFFSET; i<total && row<visible; i++, row++ )); do
+    local full_path="${SUBDIR_PATHS[$i]}"
+    # Chemin relatif pour l'affichage
+    local rel_path="${full_path#"${CURRENT_DIR}/"}"
+    [[ "$rel_path" == "$full_path" ]] && rel_path="$(basename -- "$full_path")"
+    local safe_name
+    safe_name="$(sanitize_for_display "$rel_path")"
+
+    local raw_data="${SUBDIR_DATA[$i]:-0}"
+    local metric
+    if [[ "$SORT_MODE" == "mtime" ]]; then
+      metric="$(date_from_epoch "$raw_data")"
+    else
+      metric="$(human_size "$raw_data")"
+    fi
+
+    local name_max=$(( COLUMNS - 30 ))
+    (( name_max < 5 )) && name_max=5
+    if (( ${#safe_name} > name_max )); then
+      safe_name="${safe_name:0:$((name_max-1))}…"
+    fi
+
+    local line_text
+    printf -v line_text '  %2d)  %12s   %s' "$((i+1))" "$metric" "$safe_name"
+
+    if (( i == CURSOR )); then
+      printf '%s%s%s\n' "$(tput rev 2>/dev/null || true)" \
+        "$(_tui_pad "$line_text" "$COLUMNS")" \
+        "$(tput sgr0 2>/dev/null || true)"
+    else
+      printf '%s\n' "$(_tui_pad "$line_text" "$COLUMNS")"
+    fi
+  done
+
+  # Remplir les lignes vides restantes
+  while (( row < visible )); do
+    printf '%s\n' "$(_tui_pad "" "$COLUMNS")"
+    (( row++ ))
+  done
+
+  # Indicateur de scroll si des entrées sont hors champ
+  local remaining=$(( total - SCROLL_OFFSET - visible ))
+  if (( remaining > 0 )); then
+    # Écraser la dernière ligne de la zone liste
+    tput cup $(( 2 + 1 + visible - 1 )) 0 2>/dev/null || true
+    local hint="  ↓ $remaining autre(s)…"
+    printf '%s\n' "$(_tui_pad "$hint" "$COLUMNS")"
+  fi
+}
+
+# ── Footer (séparateur + 2 lignes de raccourcis) ─────────────────────────
+
+draw_footer() {
+  local sep="" i
+  for (( i=0; i<COLUMNS; i++ )); do sep+="─"; done
+  printf '%s\n' "${sep:0:$COLUMNS}"
+  local n="${#SUBDIR_PATHS[@]}"
+  local f1="  [↑↓] naviguer  [Entrée] ouvrir  [1-$n] accès direct  [0] retour"
+  local f2="  [s] tri  [a] taille  [f] fichiers  [r] rapport  [h] aide  [c] config  [q] quitter"
+  printf '%s\n' "$(_tui_pad "$f1" "$COLUMNS")"
+  printf '%s\n' "$(_tui_pad "$f2" "$COLUMNS")"
+}
+
+# ── Redessin complet ──────────────────────────────────────────────────────
+
+tui_draw() {
+  LINES=$(tput lines 2>/dev/null || echo 24)
+  COLUMNS=$(tput cols  2>/dev/null || echo 80)
+  tput cup 0 0 2>/dev/null || true
+  tput ed      2>/dev/null || true   # efface jusqu'à fin d'écran (gère rétrécissement)
+
+  if (( LINES < 9 )); then
+    printf 'Terminal trop petit (%d lignes). Agrandissez la fenêtre.\n' "$LINES"
+    _NEEDS_REDRAW=0
+    return
+  fi
+
+  draw_header
+  draw_list
+  tput cup $(( LINES - 3 )) 0 2>/dev/null || true
+  draw_footer
+
+  _NEEDS_REDRAW=0   # remis à 0 APRÈS le dessin complet
+}
+
 navigate() {
   while true; do
     show_header
@@ -437,8 +622,7 @@ navigate() {
             if [[ -n "${SUBDIR_PATHS[$idx]-}" ]]; then
               target="${SUBDIR_PATHS[$idx]}"
               prev_dir="$CURRENT_DIR"
-              candidate="${CURRENT_DIR%/}/${target}"
-              set_current_dir "$candidate" || {
+              set_current_dir "$target" || {
                 LAST_WARNING="navigation impossible vers le dossier demandé"
                 CURRENT_DIR="$prev_dir"
                 continue
