@@ -142,9 +142,8 @@ assert_true '
   SUBDIR_DATA=("1024" "2048" "512")
   SORT_MODE="size"
   CURSOR=0; SCROLL_OFFSET=0
-  output="$(draw_list 2>/dev/null)"
+  line_count=$(draw_list 2>/dev/null | wc -l)
   visible=$(( LINES - 6 ))
-  line_count=$(printf "%s" "$output" | wc -l)
   (( line_count == visible ))
 ' "draw_list: produit exactement LINES-6 lignes (18 pour LINES=24)"
 
