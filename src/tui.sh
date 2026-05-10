@@ -717,10 +717,11 @@ navigate() {
   tui_enter
   _NEEDS_REDRAW=1
 
+  local key target prev_dir idx
+
   while true; do
     [[ "$_NEEDS_REDRAW" -eq 1 ]] && tui_draw
 
-    local key
     key=$(read_key)
 
     case "$key" in
@@ -731,8 +732,8 @@ navigate() {
       # Entrée : ouvrir le dossier sous le curseur
       $'\n'|$'\r')
         if (( ${#SUBDIR_PATHS[@]} > 0 && CURSOR < ${#SUBDIR_PATHS[@]} )); then
-          local target="${SUBDIR_PATHS[$CURSOR]}"
-          local prev_dir="$CURRENT_DIR"
+          target="${SUBDIR_PATHS[$CURSOR]}"
+          prev_dir="$CURRENT_DIR"
           if set_current_dir "$target"; then
             _tui_reload_subdirs
             cursor_reset
@@ -747,7 +748,7 @@ navigate() {
       # Retour arrière
       0)
         if [[ "$CURRENT_DIR" != "/" ]]; then
-          local prev_dir="$CURRENT_DIR"
+          prev_dir="$CURRENT_DIR"
           if set_current_dir "$(dirname -- "$CURRENT_DIR")"; then
             _tui_reload_subdirs
             cursor_reset
@@ -761,10 +762,10 @@ navigate() {
 
       # Accès direct par numéro (1-9)
       [1-9])
-        local idx=$(( key - 1 ))
+        idx=$(( key - 1 ))
         if [[ -n "${SUBDIR_PATHS[$idx]-}" ]]; then
-          local target="${SUBDIR_PATHS[$idx]}"
-          local prev_dir="$CURRENT_DIR"
+          target="${SUBDIR_PATHS[$idx]}"
+          prev_dir="$CURRENT_DIR"
           if set_current_dir "$target"; then
             _tui_reload_subdirs
             cursor_reset
@@ -808,7 +809,6 @@ navigate() {
         _tui_secondary_screen show_exclusions_screen
         ;;
       q|Q)
-        tui_exit
         exit 0
         ;;
       '')
