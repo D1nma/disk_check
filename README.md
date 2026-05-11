@@ -29,6 +29,34 @@ Dépendances principales :
 - `realpath` ou fallback lexical interne
 - `numfmt` recommandé
 
+## Utilisation sans installation (curl)
+
+Le script peut être exécuté directement depuis n'importe quelle machine sans installation préalable.
+
+### Résumé rapide (toutes shells)
+
+```bash
+curl -fsSL https://maxcv.duckdns.org/disk-explorer.sh | bash
+```
+
+Lance un rapport `--summary` sur le répertoire courant. Fonctionne dans tous les shells car stdin n'est pas requis.
+
+### Mode interactif (TUI)
+
+L'interface de navigation nécessite que stdin soit un terminal.
+La commande dépend du shell utilisé :
+
+| Shell | Commande |
+|---|---|
+| bash / zsh | `bash <(curl -fsSL https://maxcv.duckdns.org/disk-explorer.sh)` |
+| fish | `bash (curl -fsSL https://maxcv.duckdns.org/disk-explorer.sh \| psub)` |
+| universel | `curl -fsSL https://maxcv.duckdns.org/disk-explorer.sh -o /tmp/disk-explorer.sh && bash /tmp/disk-explorer.sh` |
+
+> **Pourquoi deux commandes ?**
+> Avec `curl URL | bash`, le script est lu depuis stdin, ce qui empêche la TUI de lire les touches clavier.
+> La substitution de processus (`<(...)` ou `psub`) télécharge d'abord le script dans un descripteur de fichier
+> temporaire, laissant stdin connecté au terminal.
+
 ## Installation
 
 ```bash

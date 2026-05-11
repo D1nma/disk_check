@@ -474,6 +474,7 @@ main() {
   esac
 }
 
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+# :-  : BASH_SOURCE[0] is unset/empty when piped to bash (curl … | bash), set -u requires default.
+if [[ "${BASH_SOURCE[0]:-}" == "${0}" || -z "${BASH_SOURCE[0]:-}" ]]; then
   main "$@"
 fi
