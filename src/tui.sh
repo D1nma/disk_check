@@ -762,7 +762,6 @@ navigate() {
   tput cup 0 0 2>/dev/null || true
   tput ed      2>/dev/null || true
   printf '%s\r\n' "$(_tui_pad "DISK EXPLORER  ${CURRENT_DIR}  $(analysis_label) · ${SORT_MODE}" "$COLUMNS")"
-  printf '%s\r\n' "$(_tui_pad "  Analyse en cours…" "$COLUMNS")"
   _tui_reload_subdirs
   _NEEDS_REDRAW=1
 
