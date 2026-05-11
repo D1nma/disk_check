@@ -264,13 +264,8 @@ show_header() {
   echo -e "  Dossier : ${YELLOW}${CURRENT_DIR}${NC}"
 
   local df_fields
-  if [[ "$CURRENT_DIR" == "$_TUI_DF_CACHE_DIR" && -n "$_TUI_DF_CACHE_VAL" ]]; then
-    df_fields="$_TUI_DF_CACHE_VAL"
-  else
-    df_fields="$(get_df_fields 2>/dev/null)"
-    _TUI_DF_CACHE_DIR="$CURRENT_DIR"
-    _TUI_DF_CACHE_VAL="$df_fields"
-  fi
+  _tui_refresh_df_cache
+  df_fields="$_TUI_DF_CACHE_VAL"
 
   if [[ -n "$df_fields" ]]; then
     local size used avail use_p mounted use_pct fields
