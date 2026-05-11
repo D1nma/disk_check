@@ -1628,7 +1628,7 @@ draw_footer() {
   for (( i=0; i<COLUMNS; i++ )); do sep+="─"; done
   printf '%s\r\n' "${sep:0:$COLUMNS}"
   local n="${#SUBDIR_PATHS[@]}"
-  local f1="  [↑↓] naviguer  [Entrée] ouvrir  [1-$n] accès direct  [0] retour"
+  local f1="  [↑↓] naviguer  [Entrée] ouvrir  [d] supprimer  [1-$n] accès direct  [0] retour"
   local -a bindings=("[s] tri" "[a] taille" "[f] fichiers" "[r] rapport" "[h] aide" "[c] config" "[q] quitter")
   local f2="  " sep2="" b candidate
   for b in "${bindings[@]}"; do
@@ -1753,6 +1753,46 @@ navigate_legacy() {
         ;;
     esac
   done
+}
+
+# Supprime l'entrée sous le curseur après confirmation inline dans le footer.
+_tui_delete_selected() {
+  (( ${#SUBDIR_PATHS[@]} == 0 || CURSOR >= ${#SUBDIR_PATHS[@]} )) && return
+  [[ "${SUBDIR_DATA[$CURSOR]:-}" == "__dotdot__" ]] && return
+
+  local path="${SUBDIR_PATHS[$CURSOR]}"
+  local entry_type="${SUBDIR_TYPES[$CURSOR]:-d}"
+  local display_name
+  display_name="$(sanitize_for_display "$(basename -- "$path")")"
+  [[ "$entry_type" == "d" ]] && display_name="${display_name}/"
+
+  # Confirmation dans la dernière ligne du footer (sans quitter le buffer TUI)
+  tput cup $(( LINES - 1 )) 0 2>/dev/null || true
+  local prompt="  Supprimer \"${display_name}\" ? [y/N] "
+  printf '%s' "$(_tui_pad "$prompt" "$COLUMNS")"
+  tput cup $(( LINES - 1 )) ${#prompt} 2>/dev/null || true
+  stty echo cooked 2>/dev/null || true
+  local answer=""
+  IFS= read -r answer 2>/dev/null || answer=""
+  stty -echo raw 2>/dev/null || true
+
+  if [[ "${answer,,}" == "y" ]]; then
+    local rm_ok=0
+    if [[ "$entry_type" == "d" ]]; then
+      rm -rf -- "$path" 2>/dev/null && rm_ok=1
+    else
+      rm -f -- "$path" 2>/dev/null && rm_ok=1
+    fi
+    if (( rm_ok )); then
+      LAST_WARNING="\"${display_name}\" supprimé"
+      _tui_reload_subdirs
+      # Ajuster le curseur si hors plage après rechargement
+      (( ${#SUBDIR_PATHS[@]} > 0 && CURSOR >= ${#SUBDIR_PATHS[@]} )) && (( CURSOR = ${#SUBDIR_PATHS[@]} - 1 )) || true
+    else
+      LAST_WARNING="échec suppression : ${display_name}"
+    fi
+  fi
+  _NEEDS_REDRAW=1
 }
 
 # Recharge SUBDIR_PATHS/SUBDIR_DATA en relançant le scan.
@@ -1899,6 +1939,9 @@ navigate() {
       a|A)
         [[ "$FILE_SIZE_MODE" == "real" ]] && FILE_SIZE_MODE="apparent" || FILE_SIZE_MODE="real"
         _NEEDS_REDRAW=1
+        ;;
+      d|D)
+        _tui_delete_selected
         ;;
       p|P)
         [[ "$ANALYSIS_MODE" == "partition" ]] && ANALYSIS_MODE="global" || ANALYSIS_MODE="partition"
