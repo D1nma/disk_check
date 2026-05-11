@@ -33,10 +33,19 @@ Dépendances principales :
 
 Le script peut être exécuté directement depuis n'importe quelle machine sans installation préalable.
 
+Deux URLs disponibles — préférer **GitHub raw** sur les réseaux d'entreprise (DuckDNS peut être bloqué par les proxies/firewalls) :
+
+| Source | URL |
+|---|---|
+| GitHub raw (recommandé) | `https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh` |
+| Serveur perso | `https://maxcv.duckdns.org/disk-explorer.sh` |
+
+> Si tu obtiens `curl: (35) OpenSSL SSL_connect: Connection reset`, le proxy d'entreprise bloque DuckDNS — utilise l'URL GitHub raw.
+
 ### Résumé rapide (toutes shells)
 
 ```bash
-curl -fsSL https://maxcv.duckdns.org/disk-explorer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh | bash
 ```
 
 Lance un rapport `--summary` sur le répertoire courant. Fonctionne dans tous les shells car stdin n'est pas requis.
@@ -48,9 +57,9 @@ La commande dépend du shell utilisé :
 
 | Shell | Commande |
 |---|---|
-| bash / zsh | `bash <(curl -fsSL https://maxcv.duckdns.org/disk-explorer.sh)` |
-| fish | `bash (curl -fsSL https://maxcv.duckdns.org/disk-explorer.sh \| psub)` |
-| universel | `curl -fsSL https://maxcv.duckdns.org/disk-explorer.sh -o /tmp/disk-explorer.sh && bash /tmp/disk-explorer.sh` |
+| bash / zsh | `bash <(curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh)` |
+| fish | `bash (curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh \| psub)` |
+| universel | `curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh -o /tmp/de.sh && bash /tmp/de.sh` |
 
 > **Pourquoi deux commandes ?**
 > Avec `curl URL | bash`, le script est lu depuis stdin, ce qui empêche la TUI de lire les touches clavier.
