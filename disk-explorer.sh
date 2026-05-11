@@ -81,6 +81,7 @@ declare -a EXCLUDED_DIRS=()
 declare -a ACTIVE_EXCLUDED_DIRS=()
 declare -a SUBDIR_PATHS=()
 declare -a SUBDIR_DATA=()   # données brutes parallèles à SUBDIR_PATHS
+declare -a SUBDIR_TYPES=()  # 'd' = répertoire, 'f' = fichier
 TUI_CAPABLE=0
 _NEEDS_REDRAW=0
 CURSOR=0
@@ -1299,11 +1300,13 @@ process_line_display() {
   local mode="$2"
   local raw_data="$3"
   local idx="$4"
+  local entry_type="${5:-d}"
 
   local rel_path="${full_path#"${CURRENT_DIR}/"}"
   [[ -z "$rel_path" || "$rel_path" == "$full_path" ]] && rel_path=$(basename -- "$full_path")
   SUBDIR_PATHS+=("$full_path")
   SUBDIR_DATA+=("$raw_data")
+  SUBDIR_TYPES+=("$entry_type")
 
   local display_metric
   if [[ "$mode" == "size" ]]; then
@@ -1314,6 +1317,7 @@ process_line_display() {
 
   local safe_rel_path
   safe_rel_path="$(sanitize_for_display "$rel_path")"
+  [[ "$entry_type" == "d" ]] && safe_rel_path="${safe_rel_path}/"
 
   if is_heavy_known "$rel_path"; then
     printf '  %b%2d)%b  %12s   %b%b%s%b\n' "$BOLD" "$idx" "$NC" "$display_metric" "$MAGENTA" "$BOLD" "$safe_rel_path" "$NC"
@@ -1322,41 +1326,70 @@ process_line_display() {
   fi
 }
 
+# Scanne les fichiers (non récursif, depth 1) dans CURRENT_DIR.
+# Sortie : NUL-délimitée, format "valeur\tchemin" (taille apparente ou mtime).
+_tui_scan_shallow_files() {
+  local out_file="$1"
+  local err_file="$2"
+  local -a find_cmd
+  build_find_prefix find_cmd 1
+  if [[ "$SORT_MODE" == "mtime" ]]; then
+    "${find_cmd[@]}" -type f -printf '%T@\t%p\0'
+  else
+    "${find_cmd[@]}" -type f -printf '%s\t%p\0'
+  fi >"$out_file" 2>"$err_file" || true
+  update_scan_warning "$err_file" "Analyse fichiers partielle" "$?"
+}
+
 show_heavy_subdirs() {
   SUBDIR_PATHS=()
   SUBDIR_DATA=()
+  SUBDIR_TYPES=()
   LAST_WARNING=""
 
-  local tmp_file err_file
-  tmp_file=$(make_temp_file) || return 1
-  err_file=$(make_temp_file) || return 1
+  local tmp_dirs err_dirs tmp_files err_files tmp_merged
+  tmp_dirs=$(make_temp_file)   || return 1
+  err_dirs=$(make_temp_file)   || return 1
+  tmp_files=$(make_temp_file)  || return 1
+  err_files=$(make_temp_file)  || return 1
+  tmp_merged=$(make_temp_file) || return 1
 
   echo -e "\n${CYAN}${BOLD}Analyse des sous-dossiers...${NC}"
 
-  scan_subdirs_to_file "$tmp_file" "$err_file"
+  scan_subdirs_to_file "$tmp_dirs" "$err_dirs"
   LAST_WARNING="$SCAN_WARNING"
 
-  local i=0
-  local line ts full_path raw_size
-  if [[ "$SORT_MODE" == "mtime" ]]; then
-    while IFS= read -r -d '' line; do
-      ts="${line%%$'\t'*}"
-      full_path="${line#*$'\t'}"
-      [[ -z "$full_path" || "$full_path" == "$line" ]] && continue
-      process_line_display "$full_path" "mtime" "$ts" "$((++i))"
-    done < "$tmp_file"
-  else
-    while IFS= read -r -d '' line; do
-      raw_size="${line%%$'\t'*}"
-      full_path="${line#*$'\t'}"
-      [[ -z "$full_path" || "$full_path" == "$line" ]] && continue
-      process_line_display "$full_path" "size" "$raw_size" "$((++i))"
-    done < "$tmp_file"
-  fi
+  _tui_scan_shallow_files "$tmp_files" "$err_files"
+  [[ -n "$SCAN_WARNING" && -z "$LAST_WARNING" ]] && LAST_WARNING="$SCAN_WARNING"
 
-  rm -f -- "$tmp_file" "$err_file"
+  # Fusionner dirs (tagués "d:") + fichiers (tagués "f:"), trier, prendre TOP_COUNT
+  {
+    awk -v RS='\0' '{
+      tab = index($0, "\t")
+      if (tab == 0 || length($0) <= 1) next
+      printf "%s\td:%s%c", substr($0,1,tab-1), substr($0,tab+1), 0
+    }' "$tmp_dirs"
+    awk -v RS='\0' '{
+      tab = index($0, "\t")
+      if (tab == 0 || length($0) <= 1) next
+      printf "%s\tf:%s%c", substr($0,1,tab-1), substr($0,tab+1), 0
+    }' "$tmp_files"
+  } | LC_ALL=C "$SORT_CMD" -zrn | "$HEAD_CMD" -z -n "$TOP_COUNT" > "$tmp_merged"
 
-  if (( i == 0 )); then echo -e "  ${DIM}Aucun sous-dossier affichable.${NC}"; fi
+  local i=0 line val tagged entry_type full_path mode
+  [[ "$SORT_MODE" == "mtime" ]] && mode="mtime" || mode="size"
+  while IFS= read -r -d '' line; do
+    val="${line%%$'\t'*}"
+    tagged="${line#*$'\t'}"       # "d:/path" ou "f:/path"
+    entry_type="${tagged:0:1}"    # "d" ou "f"
+    full_path="${tagged:2}"
+    [[ -z "$full_path" || "$entry_type" != [df] ]] && continue
+    process_line_display "$full_path" "$mode" "$val" "$((++i))" "$entry_type"
+  done < "$tmp_merged"
+
+  rm -f -- "$tmp_dirs" "$err_dirs" "$tmp_files" "$err_files" "$tmp_merged"
+
+  if (( i == 0 )); then echo -e "  ${DIM}Aucun élément affichable.${NC}"; fi
 }
 
 show_heavy_files() {
@@ -1525,15 +1558,17 @@ draw_list() {
   for (( i=SCROLL_OFFSET; i<total && row<visible; i++, row++ )); do
     local full_path="${SUBDIR_PATHS[$i]}"
     local raw_data="${SUBDIR_DATA[$i]:-0}"
+    local entry_type="${SUBDIR_TYPES[$i]:-d}"
     local metric safe_name bar_str
     if [[ "$raw_data" == "__dotdot__" ]]; then
-      safe_name=".."
+      safe_name="../"
       metric="            "  # champ métrique vide
       bar_str="          "   # barre vide (10 espaces)
     else
       local rel_path="${full_path#"${CURRENT_DIR}/"}"
       [[ "$rel_path" == "$full_path" ]] && rel_path="$(basename -- "$full_path")"
       safe_name="$(sanitize_for_display "$rel_path")"
+      [[ "$entry_type" == "d" ]] && safe_name="${safe_name}/"
       if [[ "$SORT_MODE" == "mtime" ]]; then
         metric="$(date_from_epoch "$raw_data")"
         bar_str="          "
@@ -1727,6 +1762,7 @@ _tui_reload_subdirs() {
   LAST_WARNING=""
   SUBDIR_PATHS=()
   SUBDIR_DATA=()
+  SUBDIR_TYPES=()
   # Feedback immédiat : affiche "Analyse en cours…" dans la zone liste
   # avant le scan (du peut être lent sur de gros répertoires).
   tput cup 3 0 2>/dev/null || true
@@ -1739,6 +1775,7 @@ _tui_reload_subdirs() {
   if [[ "$CURRENT_DIR" != "/" ]]; then
     SUBDIR_PATHS=("$(dirname -- "$CURRENT_DIR")" "${SUBDIR_PATHS[@]+"${SUBDIR_PATHS[@]}"}")
     SUBDIR_DATA=("__dotdot__" "${SUBDIR_DATA[@]+"${SUBDIR_DATA[@]}"}")
+    SUBDIR_TYPES=("d" "${SUBDIR_TYPES[@]+"${SUBDIR_TYPES[@]}"}")
   fi
 }
 
@@ -1797,17 +1834,21 @@ navigate() {
       $'\x1b[A') cursor_up  ; _NEEDS_REDRAW=1 ;;
       $'\x1b[B') cursor_down; _NEEDS_REDRAW=1 ;;
 
-      # Entrée : ouvrir le dossier sous le curseur
+      # Entrée : ouvrir le dossier sous le curseur (ignoré pour les fichiers)
       $'\n'|$'\r')
         if (( ${#SUBDIR_PATHS[@]} > 0 && CURSOR < ${#SUBDIR_PATHS[@]} )); then
-          target="${SUBDIR_PATHS[$CURSOR]}"
-          prev_dir="$CURRENT_DIR"
-          if set_current_dir "$target"; then
-            _tui_reload_subdirs
-            cursor_reset
+          if [[ "${SUBDIR_TYPES[$CURSOR]:-d}" == "f" ]]; then
+            LAST_WARNING="fichier — non navigable"
           else
-            LAST_WARNING="navigation impossible vers ce dossier"
-            CURRENT_DIR="$prev_dir"
+            target="${SUBDIR_PATHS[$CURSOR]}"
+            prev_dir="$CURRENT_DIR"
+            if set_current_dir "$target"; then
+              _tui_reload_subdirs
+              cursor_reset
+            else
+              LAST_WARNING="navigation impossible vers ce dossier"
+              CURRENT_DIR="$prev_dir"
+            fi
           fi
           _NEEDS_REDRAW=1
         fi
@@ -1832,14 +1873,18 @@ navigate() {
       [1-9])
         idx=$(( key - 1 ))
         if [[ -n "${SUBDIR_PATHS[$idx]-}" ]]; then
-          target="${SUBDIR_PATHS[$idx]}"
-          prev_dir="$CURRENT_DIR"
-          if set_current_dir "$target"; then
-            _tui_reload_subdirs
-            cursor_reset
+          if [[ "${SUBDIR_TYPES[$idx]:-d}" == "f" ]]; then
+            LAST_WARNING="fichier — non navigable"
           else
-            LAST_WARNING="navigation impossible"
-            CURRENT_DIR="$prev_dir"
+            target="${SUBDIR_PATHS[$idx]}"
+            prev_dir="$CURRENT_DIR"
+            if set_current_dir "$target"; then
+              _tui_reload_subdirs
+              cursor_reset
+            else
+              LAST_WARNING="navigation impossible"
+              CURRENT_DIR="$prev_dir"
+            fi
           fi
         else
           LAST_WARNING="sélection hors plage"

@@ -81,6 +81,7 @@ declare -a EXCLUDED_DIRS=()
 declare -a ACTIVE_EXCLUDED_DIRS=()
 declare -a SUBDIR_PATHS=()
 declare -a SUBDIR_DATA=()   # données brutes parallèles à SUBDIR_PATHS
+declare -a SUBDIR_TYPES=()  # 'd' = répertoire, 'f' = fichier
 TUI_CAPABLE=0
 _NEEDS_REDRAW=0
 CURSOR=0
