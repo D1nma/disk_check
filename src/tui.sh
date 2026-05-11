@@ -4,6 +4,13 @@
 _TUI_DF_CACHE_DIR=""
 _TUI_DF_CACHE_VAL=""
 
+_tui_refresh_df_cache() {
+  if [[ "$CURRENT_DIR" != "$_TUI_DF_CACHE_DIR" || -z "$_TUI_DF_CACHE_VAL" ]]; then
+    _TUI_DF_CACHE_VAL="$(get_df_fields 2>/dev/null)"
+    _TUI_DF_CACHE_DIR="$CURRENT_DIR"
+  fi
+}
+
 pause_screen() {
   echo
   if [[ "$TUI_CAPABLE" -eq 1 ]]; then
