@@ -32,6 +32,7 @@ DISK EXPLORER  /home/user  MÊME PARTITION · size
 - **Tree mode** — size tree with `% of parent`
 - **Sort** by size or last modified date
 - **Exclusions** — configurable per-run or persistent via config menu
+- **Remote SSH** — run on multiple machines in parallel, one report per host
 - **No install** — single self-contained script, works via `curl | bash`
 
 ---
@@ -83,6 +84,18 @@ curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer
 
 # Diagnose dependencies
 ./disk-explorer.sh --self-check
+
+# Remote scan on multiple machines (SSH key auth required)
+./disk-explorer.sh --remote \
+  --remote-hosts user@web1,user@web2 \
+  --remote-path /var/log \
+  --remote-report-dir ./reports
+
+# Remote with a hosts file and custom SSH key
+./disk-explorer.sh --remote \
+  --remote-hosts-file ./hosts.txt \
+  --remote-ssh-opt "-i ~/.ssh/id_ed25519" \
+  --remote-timeout 15
 ```
 
 ### TUI key bindings
@@ -127,6 +140,17 @@ curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer
 --no-spinner
 --self-check             Diagnose runtime dependencies
 --help
+
+Remote SSH options:
+--remote                 Run on remote machines via SSH then exit
+--remote-hosts HOSTS     Comma-separated list of targets (repeatable)
+                           e.g. user@host1,host2  or  root@10.0.0.1
+--remote-hosts-file FILE One host per line; # lines are comments
+--remote-path DIR        Directory to scan on each target (default: /)
+--remote-report-dir DIR  Local directory for per-host reports (default: ./remote-reports)
+--remote-timeout N       SSH ConnectTimeout in seconds (default: 10)
+--remote-ssh-opt OPT     Extra option passed to ssh(1), repeatable
+                           e.g. -i ~/.ssh/key  or  -p 2222
 ```
 
 ---
@@ -136,6 +160,8 @@ curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer
 GNU/Linux with Bash ≥ 4.4. Standard GNU coreutils (`find`, `du`, `sort`, `head`, `df`, `date`). `numfmt` recommended (graceful fallback if absent).
 
 macOS with Homebrew GNU coreutils is partially supported.
+
+**Remote mode** additionally requires `ssh` on the orchestrating machine and SSH key-based authentication to each target. Each target must also satisfy the Bash ≥ 4.4 + GNU coreutils requirement.
 
 ---
 
@@ -150,6 +176,7 @@ src/
   scan.sh             # du/find scan functions, temp file management
   display.sh          # non-interactive modes (summary, report, tree)
   tui.sh              # full-screen TUI (draw, input, navigation)
+  remote.sh           # SSH orchestration: remote_run_host, remote_run_all
 tests/
   run_tests.sh        # custom test suite
   *.bats              # bats test suite
