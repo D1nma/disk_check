@@ -1356,7 +1356,7 @@ show_heavy_subdirs() {
 
   rm -f -- "$tmp_file" "$err_file"
 
-  (( i == 0 )) && echo -e "  ${DIM}Aucun sous-dossier affichable.${NC}"
+  if (( i == 0 )); then echo -e "  ${DIM}Aucun sous-dossier affichable.${NC}"; fi
 }
 
 show_heavy_files() {
@@ -1432,15 +1432,17 @@ tui_enter() {
 }
 
 # Lit une touche ou séquence d'échappement.
-# Retourne "" sur timeout (0.2 s) pour permettre la vérification de _NEEDS_REDRAW.
+# Écrit dans _LAST_KEY (variable globale) pour éviter que $() ne strippé \n.
+# -N1 (majuscule) : lit exactement 1 char sans traiter \n comme délimiteur.
+_LAST_KEY=""
 read_key() {
-  local key seq
-  IFS= read -r -s -t 0.2 -n1 key 2>/dev/null || true
-  if [[ "$key" == $'\x1b' ]]; then
+  local seq
+  _LAST_KEY=""
+  IFS= read -r -s -t 0.2 -N1 _LAST_KEY 2>/dev/null || true
+  if [[ "$_LAST_KEY" == $'\x1b' ]]; then
     IFS= read -r -s -t 0.1 -n5 seq 2>/dev/null || true
-    key="${key}${seq}"
+    _LAST_KEY="${_LAST_KEY}${seq}"
   fi
-  printf '%s' "$key"
 }
 
 # ── Utilitaires de rendu ───────────────────────────────────────────────────
@@ -1512,18 +1514,20 @@ draw_list() {
 
   for (( i=SCROLL_OFFSET; i<total && row<visible; i++, row++ )); do
     local full_path="${SUBDIR_PATHS[$i]}"
-    # Chemin relatif pour l'affichage
-    local rel_path="${full_path#"${CURRENT_DIR}/"}"
-    [[ "$rel_path" == "$full_path" ]] && rel_path="$(basename -- "$full_path")"
-    local safe_name
-    safe_name="$(sanitize_for_display "$rel_path")"
-
     local raw_data="${SUBDIR_DATA[$i]:-0}"
-    local metric
-    if [[ "$SORT_MODE" == "mtime" ]]; then
-      metric="$(date_from_epoch "$raw_data")"
+    local metric safe_name
+    if [[ "$raw_data" == "__dotdot__" ]]; then
+      safe_name=".."
+      metric="            "  # champ métrique vide
     else
-      metric="$(human_size "$raw_data")"
+      local rel_path="${full_path#"${CURRENT_DIR}/"}"
+      [[ "$rel_path" == "$full_path" ]] && rel_path="$(basename -- "$full_path")"
+      safe_name="$(sanitize_for_display "$rel_path")"
+      if [[ "$SORT_MODE" == "mtime" ]]; then
+        metric="$(date_from_epoch "$raw_data")"
+      else
+        metric="$(human_size "$raw_data")"
+      fi
     fi
 
     local name_max=$(( COLUMNS - 30 ))
@@ -1701,9 +1705,19 @@ _tui_reload_subdirs() {
   LAST_WARNING=""
   SUBDIR_PATHS=()
   SUBDIR_DATA=()
-  show_heavy_subdirs >/dev/null 2>/dev/null || {
-    LAST_WARNING="erreur lors du scan des sous-dossiers"
-  }
+  # Feedback immédiat : affiche "Analyse en cours…" dans la zone liste
+  # avant le scan (du peut être lent sur de gros répertoires).
+  tput cup 3 0 2>/dev/null || true
+  printf '%s\r\n' "$(_tui_pad "  Analyse en cours…" "${COLUMNS:-80}")"
+  show_heavy_subdirs >/dev/null 2>/dev/null
+  # Ignore le code de retour : show_heavy_subdirs peut sortir avec 1
+  # sur un scan réussi (dernier (( )) à 0). SCAN_WARNING porte les vraies erreurs.
+  [[ -n "$SCAN_WARNING" ]] && LAST_WARNING="$SCAN_WARNING" || true
+  # Préfixer ".." pour permettre la remontée par sélection (hors racine).
+  if [[ "$CURRENT_DIR" != "/" ]]; then
+    SUBDIR_PATHS=("$(dirname -- "$CURRENT_DIR")" "${SUBDIR_PATHS[@]+"${SUBDIR_PATHS[@]}"}")
+    SUBDIR_DATA=("__dotdot__" "${SUBDIR_DATA[@]+"${SUBDIR_DATA[@]}"}")
+  fi
 }
 
 # Lance un écran secondaire dans le buffer alternatif actif.
@@ -1754,7 +1768,8 @@ navigate() {
   while true; do
     [[ "$_NEEDS_REDRAW" -eq 1 ]] && tui_draw
 
-    key=$(read_key)
+    read_key
+    key="$_LAST_KEY"
 
     case "$key" in
       # Flèches
