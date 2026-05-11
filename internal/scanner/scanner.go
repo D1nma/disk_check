@@ -8,7 +8,7 @@ import (
 
 // Scan recursively scans the root directory using the specified number of concurrent workers.
 // It returns a channel that will receive ScanResults as directories are processed.
-func Scan(root string, concurrency int) chan ScanResult {
+func Scan(root string, concurrency int) <-chan ScanResult {
     results := make(chan ScanResult)
     var wg sync.WaitGroup
     sem := make(chan struct{}, concurrency)
