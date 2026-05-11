@@ -1762,6 +1762,21 @@ _tui_delete_selected() {
 
   local path="${SUBDIR_PATHS[$CURSOR]}"
   local entry_type="${SUBDIR_TYPES[$CURSOR]:-d}"
+
+  # Gardes de sécurité : chemin vide, égal à CURRENT_DIR, ou hors de CURRENT_DIR
+  if [[ -z "$path" ]]; then
+    LAST_WARNING="suppression refusée : chemin vide"
+    _NEEDS_REDRAW=1; return
+  fi
+  if [[ "$path" == "$CURRENT_DIR" ]]; then
+    LAST_WARNING="suppression refusée : répertoire courant"
+    _NEEDS_REDRAW=1; return
+  fi
+  if ! path_is_equal_or_within "$path" "$CURRENT_DIR"; then
+    LAST_WARNING="suppression refusée : chemin hors du répertoire courant"
+    _NEEDS_REDRAW=1; return
+  fi
+
   local display_name
   display_name="$(sanitize_for_display "$(basename -- "$path")")"
   [[ "$entry_type" == "d" ]] && display_name="${display_name}/"
@@ -1777,11 +1792,11 @@ _tui_delete_selected() {
   stty -echo raw 2>/dev/null || true
 
   if [[ "${answer,,}" == "y" ]]; then
-    local rm_ok=0
+    local rm_ok=0 rm_msg=""
     if [[ "$entry_type" == "d" ]]; then
-      rm -rf -- "$path" 2>/dev/null && rm_ok=1
+      rm_msg=$(rm -rf -- "$path" 2>&1) && rm_ok=1 || true
     else
-      rm -f -- "$path" 2>/dev/null && rm_ok=1
+      rm_msg=$(rm -f -- "$path" 2>&1) && rm_ok=1 || true
     fi
     if (( rm_ok )); then
       LAST_WARNING="\"${display_name}\" supprimé"
@@ -1789,7 +1804,9 @@ _tui_delete_selected() {
       # Ajuster le curseur si hors plage après rechargement
       (( ${#SUBDIR_PATHS[@]} > 0 && CURSOR >= ${#SUBDIR_PATHS[@]} )) && (( CURSOR = ${#SUBDIR_PATHS[@]} - 1 )) || true
     else
-      LAST_WARNING="échec suppression : ${display_name}"
+      local err_detail
+      err_detail="$(sanitize_for_display "${rm_msg:-permission refusée}")"
+      LAST_WARNING="échec suppression : ${err_detail}"
     fi
   fi
   _NEEDS_REDRAW=1
