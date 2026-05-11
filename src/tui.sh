@@ -48,7 +48,7 @@ ${BOLD}Actions${NC}
 ${BOLD}Réglages courants${NC}
   Mode analyse       : $(analysis_label)
   Tri                : $SORT_MODE
-  Mode taille        : $FILE_SIZE_MODE
+  Taille fichiers    : $FILE_SIZE_MODE
   Top sous-dossiers  : $TOP_COUNT
   Top fichiers       : $TOP_FILES_COUNT
   Profondeur max     : $(depth_label)
@@ -344,28 +344,26 @@ _tui_scan_shallow_files() {
   update_scan_warning "$err_file" "Analyse fichiers partielle" "$?"
 }
 
-show_heavy_subdirs() {
-  SUBDIR_PATHS=()
-  SUBDIR_DATA=()
-  SUBDIR_TYPES=()
-  LAST_WARNING=""
+_TUI_SCAN_PID=0
+_TUI_SCAN_RESULT_FILE=""
+_TUI_SCAN_DONE_FILE=""
+_TUI_SCAN_WARNING_FILE=""
 
-  local tmp_dirs err_dirs tmp_files err_files tmp_merged
+# Scanne et écrit dans un fichier temporaire (NUL-délimité, "valeur\ttype:chemin").
+_tui_scan_to_file() {
+  local out_file="$1"
+  local tmp_dirs err_dirs tmp_files err_files
   tmp_dirs=$(make_temp_file)   || return 1
   err_dirs=$(make_temp_file)   || return 1
   tmp_files=$(make_temp_file)  || return 1
   err_files=$(make_temp_file)  || return 1
-  tmp_merged=$(make_temp_file) || return 1
-
-  echo -e "\n${CYAN}${BOLD}Analyse des sous-dossiers...${NC}"
 
   scan_subdirs_to_file "$tmp_dirs" "$err_dirs"
-  LAST_WARNING="$SCAN_WARNING"
+  local warn="$SCAN_WARNING"
 
   _tui_scan_shallow_files "$tmp_files" "$err_files"
-  [[ -n "$SCAN_WARNING" && -z "$LAST_WARNING" ]] && LAST_WARNING="$SCAN_WARNING"
+  [[ -n "$SCAN_WARNING" && -z "$warn" ]] && warn="$SCAN_WARNING"
 
-  # Fusionner dirs (tagués "d:") + fichiers (tagués "f:"), trier, prendre TOP_COUNT
   {
     awk -v RS='\0' '{
       tab = index($0, "\t")
@@ -377,7 +375,31 @@ show_heavy_subdirs() {
       if (tab == 0 || length($0) <= 1) next
       printf "%s\tf:%s%c", substr($0,1,tab-1), substr($0,tab+1), 0
     }' "$tmp_files"
-  } | LC_ALL=C "$SORT_CMD" -zrn | "$HEAD_CMD" -z -n "$TOP_COUNT" > "$tmp_merged"
+  } | LC_ALL=C "$SORT_CMD" -zrn | "$HEAD_CMD" -z -n "$TOP_COUNT" > "$out_file"
+
+  # On sauve le warning dans un fichier si précisé, sinon variable globale
+  if [[ -n "${_TUI_SCAN_WARNING_FILE-}" ]]; then
+    echo -n "$warn" > "$_TUI_SCAN_WARNING_FILE"
+  else
+    SCAN_WARNING="$warn"
+  fi
+
+  rm -f -- "$tmp_dirs" "$err_dirs" "$tmp_files" "$err_files"
+}
+
+show_heavy_subdirs() {
+  SUBDIR_PATHS=()
+  SUBDIR_DATA=()
+  SUBDIR_TYPES=()
+  LAST_WARNING=""
+
+  local tmp_merged
+  tmp_merged=$(make_temp_file) || return 1
+
+  echo -e "\n${CYAN}${BOLD}Analyse des sous-dossiers...${NC}"
+
+  _tui_scan_to_file "$tmp_merged"
+  LAST_WARNING="$SCAN_WARNING"
 
   local i=0 line val tagged entry_type full_path mode
   [[ "$SORT_MODE" == "mtime" ]] && mode="mtime" || mode="size"
@@ -390,10 +412,10 @@ show_heavy_subdirs() {
     process_line_display "$full_path" "$mode" "$val" "$((++i))" "$entry_type"
   done < "$tmp_merged"
 
-  rm -f -- "$tmp_dirs" "$err_dirs" "$tmp_files" "$err_files" "$tmp_merged"
-
+  rm -f -- "$tmp_merged"
   if (( i == 0 )); then echo -e "  ${DIM}Aucun élément affichable.${NC}"; fi
 }
+
 
 show_heavy_files() {
   LAST_WARNING=""
@@ -453,6 +475,7 @@ tui_check_capability() {
 }
 
 tui_exit() {
+  _tui_stop_background_scan
   trap - SIGWINCH
   stty echo cooked 2>/dev/null || true
   tput cnorm 2>/dev/null || true
@@ -537,79 +560,106 @@ draw_header() {
 
 # ── Zone liste avec viewport et curseur ──────────────────────────────────
 
+_TUI_LIST_MAX_VAL=0
+
+_tui_precompute_list_stats() {
+  _TUI_LIST_MAX_VAL=0
+  local total=${#SUBDIR_PATHS[@]}
+  local i
+  if [[ "$SORT_MODE" != "mtime" ]]; then
+    for (( i=0; i<total; i++ )); do
+      local _d="${SUBDIR_DATA[$i]:-0}"
+      [[ "$_d" == "__dotdot__" || ! "$_d" =~ ^[0-9]+$ ]] && continue
+      (( _d > _TUI_LIST_MAX_VAL )) && _TUI_LIST_MAX_VAL=$_d
+    done
+  fi
+}
+
+_tui_draw_row() {
+  local i="$1"     # Index global dans SUBDIR_PATHS
+  local row="$2"   # Ligne écran (0 = première ligne de la zone liste)
+  local total=${#SUBDIR_PATHS[@]}
+  local bar_width=10
+
+  tput cup $(( 3 + row )) 0 2>/dev/null || true
+
+  if (( i >= total )); then
+    printf '%s' "$(_tui_pad "" "$COLUMNS")"
+    return
+  fi
+
+  local full_path="${SUBDIR_PATHS[$i]}"
+  local raw_data="${SUBDIR_DATA[$i]:-0}"
+  local entry_type="${SUBDIR_TYPES[$i]:-d}"
+  local metric safe_name bar_str
+
+  if [[ "$raw_data" == "__dotdot__" ]]; then
+    safe_name="../"
+    metric="            "
+    bar_str="          "
+  else
+    local rel_path="${full_path#"${CURRENT_DIR}/"}"
+    [[ "$rel_path" == "$full_path" ]] && rel_path="$(basename -- "$full_path")"
+    safe_name="$(sanitize_for_display "$rel_path")"
+    [[ "$entry_type" == "d" ]] && safe_name="${safe_name}/"
+    if [[ "$SORT_MODE" == "mtime" ]]; then
+      metric="$(date_from_epoch "$raw_data")"
+      bar_str="          "
+    else
+      metric="$(human_size "$raw_data")"
+      local val="${raw_data:-0}"
+      [[ "$val" =~ ^[0-9]+$ ]] || val=0
+      local fill=0
+      (( _TUI_LIST_MAX_VAL > 0 )) && fill=$(( bar_width * val / _TUI_LIST_MAX_VAL ))
+      (( fill > bar_width )) && fill=$bar_width
+      local empty=$(( bar_width - fill ))
+      bar_str=""
+      local k
+      for (( k=0; k<fill;  k++ )); do bar_str+="█"; done
+      for (( k=0; k<empty; k++ )); do bar_str+="░"; done
+    fi
+  fi
+
+  local name_max=$(( COLUMNS - 35 ))
+  (( name_max < 5 )) && name_max=5
+  if (( ${#safe_name} > name_max )); then
+    safe_name="${safe_name:0:$((name_max-1))}…"
+  fi
+
+  local line_text
+  printf -v line_text '  %2d)  %12s  %s  %s' "$((i+1))" "$metric" "$bar_str" "$safe_name"
+
+  if (( i == CURSOR )); then
+    printf '%s%s%s' "$(tput rev 2>/dev/null || true)" \
+      "$(_tui_pad "$line_text" "$COLUMNS")" \
+      "$(tput sgr0 2>/dev/null || true)"
+  else
+    printf '%s' "$(_tui_pad "$line_text" "$COLUMNS")"
+  fi
+}
+
 draw_list() {
   local visible=$(( LINES - 6 ))
   (( visible < 1 )) && visible=1
   local total=${#SUBDIR_PATHS[@]}
   local i row=0
 
-  # Précalcul du max pour les barres proportionnelles (mode size uniquement)
-  local max_val=0 bar_width=10
-  if [[ "$SORT_MODE" != "mtime" ]]; then
-    for (( i=0; i<total; i++ )); do
-      local _d="${SUBDIR_DATA[$i]:-0}"
-      [[ "$_d" == "__dotdot__" || ! "$_d" =~ ^[0-9]+$ ]] && continue
-      (( _d > max_val )) && max_val=$_d
-    done
-  fi
+  _tui_precompute_list_stats
 
   if (( total == 0 )); then
+    tput cup 3 0 2>/dev/null || true
     printf '%s\r\n' "$(_tui_pad "  Aucun sous-dossier accessible." "$COLUMNS")"
     (( row++ ))
   fi
 
   for (( i=SCROLL_OFFSET; i<total && row<visible; i++, row++ )); do
-    local full_path="${SUBDIR_PATHS[$i]}"
-    local raw_data="${SUBDIR_DATA[$i]:-0}"
-    local entry_type="${SUBDIR_TYPES[$i]:-d}"
-    local metric safe_name bar_str
-    if [[ "$raw_data" == "__dotdot__" ]]; then
-      safe_name="../"
-      metric="            "  # champ métrique vide
-      bar_str="          "   # barre vide (10 espaces)
-    else
-      local rel_path="${full_path#"${CURRENT_DIR}/"}"
-      [[ "$rel_path" == "$full_path" ]] && rel_path="$(basename -- "$full_path")"
-      safe_name="$(sanitize_for_display "$rel_path")"
-      [[ "$entry_type" == "d" ]] && safe_name="${safe_name}/"
-      if [[ "$SORT_MODE" == "mtime" ]]; then
-        metric="$(date_from_epoch "$raw_data")"
-        bar_str="          "
-      else
-        metric="$(human_size "$raw_data")"
-        local val="${raw_data:-0}"
-        [[ "$val" =~ ^[0-9]+$ ]] || val=0
-        local fill=0
-        (( max_val > 0 )) && fill=$(( bar_width * val / max_val ))
-        (( fill > bar_width )) && fill=$bar_width
-        local empty=$(( bar_width - fill ))
-        bar_str=""
-        local k
-        for (( k=0; k<fill;  k++ )); do bar_str+="█"; done
-        for (( k=0; k<empty; k++ )); do bar_str+="░"; done
-      fi
-    fi
-
-    local name_max=$(( COLUMNS - 35 ))
-    (( name_max < 5 )) && name_max=5
-    if (( ${#safe_name} > name_max )); then
-      safe_name="${safe_name:0:$((name_max-1))}…"
-    fi
-
-    local line_text
-    printf -v line_text '  %2d)  %12s  %s  %s' "$((i+1))" "$metric" "$bar_str" "$safe_name"
-
-    if (( i == CURSOR )); then
-      printf '%s%s%s\r\n' "$(tput rev 2>/dev/null || true)" \
-        "$(_tui_pad "$line_text" "$COLUMNS")" \
-        "$(tput sgr0 2>/dev/null || true)"
-    else
-      printf '%s\r\n' "$(_tui_pad "$line_text" "$COLUMNS")"
-    fi
+    _tui_draw_row "$i" "$row"
+    printf '\r\n'
   done
 
   # Remplir les lignes vides restantes
   while (( row < visible )); do
+    tput cup $(( 3 + row )) 0 2>/dev/null || true
     printf '%s\r\n' "$(_tui_pad "" "$COLUMNS")"
     (( row++ ))
   done
@@ -617,8 +667,7 @@ draw_list() {
   # Indicateur de scroll si des entrées sont hors champ
   local remaining=$(( total - SCROLL_OFFSET - visible ))
   if (( remaining > 0 )); then
-    # Écraser la dernière ligne de la zone liste
-    tput cup $(( 2 + 1 + visible - 1 )) 0 2>/dev/null || true
+    tput cup $(( 3 + visible - 1 )) 0 2>/dev/null || true
     local hint="  ↓ $remaining autre(s)…"
     printf '%s\r\n' "$(_tui_pad "$hint" "$COLUMNS")"
   fi
@@ -627,6 +676,7 @@ draw_list() {
 # ── Footer (séparateur + 2 lignes de raccourcis) ─────────────────────────
 
 draw_footer() {
+  tput cup $(( LINES - 3 )) 0 2>/dev/null || true
   local sep="" i
   for (( i=0; i<COLUMNS; i++ )); do sep+="─"; done
   printf '%s\r\n' "${sep:0:$COLUMNS}"
@@ -647,17 +697,37 @@ draw_footer() {
 # ── Curseur ────────────────────────────────────────────────────────────────
 
 cursor_up() {
-  (( CURSOR > 0 )) && (( CURSOR-- )) || true
-  (( CURSOR < SCROLL_OFFSET )) && (( SCROLL_OFFSET-- )) || true
+  local old_cursor=$CURSOR
+  (( CURSOR > 0 )) && (( CURSOR-- )) || return 0
+  
+  if (( CURSOR < SCROLL_OFFSET )); then
+    (( SCROLL_OFFSET-- ))
+    _NEEDS_REDRAW=1
+  else
+    _tui_precompute_list_stats
+    _tui_draw_row "$old_cursor" "$(( old_cursor - SCROLL_OFFSET ))"
+    _tui_draw_row "$CURSOR" "$(( CURSOR - SCROLL_OFFSET ))"
+  fi
 }
 
 cursor_down() {
   local visible=$(( LINES - 6 ))
   (( visible < 1 )) && visible=1
-  local last=$(( ${#SUBDIR_PATHS[@]} - 1 ))
-  (( last < 0 )) && return
-  (( CURSOR < last )) && (( CURSOR++ )) || true
-  (( CURSOR >= SCROLL_OFFSET + visible )) && (( SCROLL_OFFSET++ )) || true
+  local total=${#SUBDIR_PATHS[@]}
+  local last=$(( total - 1 ))
+  (( last < 0 )) && return 0
+  
+  local old_cursor=$CURSOR
+  (( CURSOR < last )) && (( CURSOR++ )) || return 0
+  
+  if (( CURSOR >= SCROLL_OFFSET + visible )); then
+    (( SCROLL_OFFSET++ ))
+    _NEEDS_REDRAW=1
+  else
+    _tui_precompute_list_stats
+    _tui_draw_row "$old_cursor" "$(( old_cursor - SCROLL_OFFSET ))"
+    _tui_draw_row "$CURSOR" "$(( CURSOR - SCROLL_OFFSET ))"
+  fi
 }
 
 cursor_reset() {
@@ -815,29 +885,132 @@ _tui_delete_selected() {
   _NEEDS_REDRAW=1
 }
 
-# Recharge SUBDIR_PATHS/SUBDIR_DATA en relançant le scan.
-# Si le scan échoue, SUBDIR_PATHS reste vide et LAST_WARNING est positionné.
-_tui_reload_subdirs() {
-  _TUI_DF_CACHE_VAL=""
-  LAST_WARNING=""
+_tui_stop_background_scan() {
+  if [[ "$_TUI_SCAN_PID" -gt 0 ]]; then
+    kill -9 "$_TUI_SCAN_PID" 2>/dev/null || true
+    wait "$_TUI_SCAN_PID" 2>/dev/null || true
+  fi
+  _TUI_SCAN_PID=0
+  [[ -f "$_TUI_SCAN_RESULT_FILE" ]] && rm -f "$_TUI_SCAN_RESULT_FILE"
+  [[ -f "$_TUI_SCAN_DONE_FILE" ]]   && rm -f "$_TUI_SCAN_DONE_FILE"
+  [[ -f "$_TUI_SCAN_WARNING_FILE" ]] && rm -f "$_TUI_SCAN_WARNING_FILE"
+}
+
+_TUI_PRESERVE_PATH=""
+
+_tui_check_scan_completion() {
+  [[ "$_TUI_SCAN_PID" -eq 0 ]] && return 0
+  [[ ! -f "$_TUI_SCAN_DONE_FILE" ]] && return 0
+
+  local line val tagged entry_type full_path
   SUBDIR_PATHS=()
   SUBDIR_DATA=()
   SUBDIR_TYPES=()
-  # Feedback immédiat : affiche "Analyse en cours…" dans la zone liste
-  # avant le scan (du peut être lent sur de gros répertoires).
-  tput cup 3 0 2>/dev/null || true
-  printf '%s\r\n' "$(_tui_pad "  Analyse en cours…" "${COLUMNS:-80}")"
-  show_heavy_subdirs >/dev/null 2>/dev/null
-  # Ignore le code de retour : show_heavy_subdirs peut sortir avec 1
-  # sur un scan réussi (dernier (( )) à 0). SCAN_WARNING porte les vraies erreurs.
-  [[ -n "$SCAN_WARNING" ]] && LAST_WARNING="$SCAN_WARNING" || true
-  # Préfixer ".." pour permettre la remontée par sélection (hors racine).
+  
+  # Charger les résultats du scan fini
+  while IFS= read -r -d '' line; do
+    val="${line%%$'\t'*}"
+    tagged="${line#*$'\t'}"
+    entry_type="${tagged:0:1}"
+    full_path="${tagged:2}"
+    [[ -z "$full_path" || "$entry_type" != [df] ]] && continue
+    SUBDIR_PATHS+=("$full_path")
+    SUBDIR_DATA+=("$val")
+    SUBDIR_TYPES+=("$entry_type")
+  done < "$_TUI_SCAN_RESULT_FILE"
+
+  # Charger le warning s'il existe
+  if [[ -f "$_TUI_SCAN_WARNING_FILE" ]]; then
+    LAST_WARNING="$(cat "$_TUI_SCAN_WARNING_FILE")"
+  fi
+
+  # Ajouter ".."
   if [[ "$CURRENT_DIR" != "/" ]]; then
     SUBDIR_PATHS=("$(dirname -- "$CURRENT_DIR")" "${SUBDIR_PATHS[@]+"${SUBDIR_PATHS[@]}"}")
     SUBDIR_DATA=("__dotdot__" "${SUBDIR_DATA[@]+"${SUBDIR_DATA[@]}"}")
     SUBDIR_TYPES=("d" "${SUBDIR_TYPES[@]+"${SUBDIR_TYPES[@]}"}")
   fi
+
+  # Tenter de restaurer le curseur si demandé
+  if [[ -n "$_TUI_PRESERVE_PATH" ]]; then
+    local i
+    for (( i=0; i<${#SUBDIR_PATHS[@]}; i++ )); do
+      if [[ "${SUBDIR_PATHS[$i]}" == "$_TUI_PRESERVE_PATH" ]]; then
+        CURSOR=$i
+        # Ajuster le scroll si nécessaire
+        local visible=$(( LINES - 6 ))
+        (( visible < 1 )) && visible=1
+        if (( CURSOR < SCROLL_OFFSET || CURSOR >= SCROLL_OFFSET + visible )); then
+          SCROLL_OFFSET=$(( CURSOR - (visible / 2) ))
+          (( SCROLL_OFFSET < 0 )) && SCROLL_OFFSET=0
+        fi
+        break
+      fi
+    done
+    _TUI_PRESERVE_PATH=""
+  fi
+
+  _tui_stop_background_scan
+  _NEEDS_REDRAW=1
+  return 1 # Signale que le scan est fini
 }
+
+
+_TUI_SPINNER_FRAMES=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+_TUI_SPINNER_IDX=0
+
+_tui_draw_loading_indicator() {
+  local frame="${_TUI_SPINNER_FRAMES[$_TUI_SPINNER_IDX]}"
+  tput cup 3 0 2>/dev/null || true
+  printf '  %b%s%b  Analyse en cours…' "$CYAN" "$frame" "$NC"
+  _TUI_SPINNER_IDX=$(( (_TUI_SPINNER_IDX + 1) % ${#_TUI_SPINNER_FRAMES[@]} ))
+}
+
+# Recharge SUBDIR_PATHS/SUBDIR_DATA. En mode TUI, lance un scan ASYNC.
+# $1: optionnel, chemin à tenter de resélectionner après le scan.
+_tui_reload_subdirs() {
+  _TUI_DF_CACHE_VAL=""
+  LAST_WARNING=""
+  _TUI_PRESERVE_PATH="${1-}"
+  
+  if [[ "$TUI_CAPABLE" -eq 0 ]]; then
+    # Mode synchrone (legacy / summary)
+    SUBDIR_PATHS=()
+    SUBDIR_DATA=()
+    SUBDIR_TYPES=()
+    show_heavy_subdirs >/dev/null 2>/dev/null
+    [[ -n "$SCAN_WARNING" ]] && LAST_WARNING="$SCAN_WARNING" || true
+    if [[ "$CURRENT_DIR" != "/" ]]; then
+      SUBDIR_PATHS=("$(dirname -- "$CURRENT_DIR")" "${SUBDIR_PATHS[@]+"${SUBDIR_PATHS[@]}"}")
+      SUBDIR_DATA=("__dotdot__" "${SUBDIR_DATA[@]+"${SUBDIR_DATA[@]}"}")
+      SUBDIR_TYPES=("d" "${SUBDIR_TYPES[@]+"${SUBDIR_TYPES[@]}"}")
+    fi
+    return
+  fi
+
+  # Mode TUI : Asynchrone
+  _tui_stop_background_scan
+  
+  _TUI_SCAN_RESULT_FILE=$(make_temp_file) || return 1
+  _TUI_SCAN_DONE_FILE=$(make_temp_file)   || return 1
+  _TUI_SCAN_WARNING_FILE=$(make_temp_file) || return 1
+  
+  # Feedback immédiat
+  SUBDIR_PATHS=()
+  SUBDIR_DATA=()
+  SUBDIR_TYPES=()
+  _TUI_SPINNER_IDX=0
+  _tui_draw_loading_indicator
+
+  # Lancer le scan en background
+  (
+    _tui_scan_to_file "$_TUI_SCAN_RESULT_FILE"
+    touch "$_TUI_SCAN_DONE_FILE"
+  ) &
+  _TUI_SCAN_PID=$!
+}
+
+
 
 # Lance un écran secondaire dans le buffer alternatif actif.
 # Restaure cooked avant l'appel (pour les read -r -p dans config/exclusions).
@@ -884,10 +1057,16 @@ navigate() {
   local key target prev_dir idx
 
   while true; do
+    _tui_check_scan_completion || true
     [[ "$_NEEDS_REDRAW" -eq 1 ]] && tui_draw
 
     read_key
     key="$_LAST_KEY"
+
+    if [[ -z "$key" && "$_TUI_SCAN_PID" -gt 0 ]]; then
+      _tui_draw_loading_indicator
+      continue
+    fi
 
     case "$key" in
       # Flèches
@@ -953,8 +1132,11 @@ navigate() {
         ;;
 
       s|S)
+        local cur_p=""
+        (( CURSOR < ${#SUBDIR_PATHS[@]} )) && cur_p="${SUBDIR_PATHS[$CURSOR]}"
         [[ "$SORT_MODE" == "size" ]] && SORT_MODE="mtime" || SORT_MODE="size"
-        _tui_reload_subdirs; cursor_reset; _NEEDS_REDRAW=1
+        _tui_reload_subdirs "$cur_p"
+        _NEEDS_REDRAW=1
         ;;
       a|A)
         [[ "$FILE_SIZE_MODE" == "real" ]] && FILE_SIZE_MODE="apparent" || FILE_SIZE_MODE="real"
@@ -964,8 +1146,11 @@ navigate() {
         _tui_delete_selected
         ;;
       p|P)
+        local cur_p=""
+        (( CURSOR < ${#SUBDIR_PATHS[@]} )) && cur_p="${SUBDIR_PATHS[$CURSOR]}"
         [[ "$ANALYSIS_MODE" == "partition" ]] && ANALYSIS_MODE="global" || ANALYSIS_MODE="partition"
-        _tui_reload_subdirs; cursor_reset; _NEEDS_REDRAW=1
+        _tui_reload_subdirs "$cur_p"
+        _NEEDS_REDRAW=1
         ;;
       f|F)
         _tui_secondary_screen show_heavy_files
