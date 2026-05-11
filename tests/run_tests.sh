@@ -147,6 +147,88 @@ assert_true '
   (( line_count == visible ))
 ' "draw_list: produit exactement LINES-6 lignes (18 pour LINES=24)"
 
+echo -e "\nRunning tests for remote_validate_host..."
+
+assert_true  "remote_validate_host 'hostname'"              "remote_validate_host: hostname simple"
+assert_true  "remote_validate_host 'user@hostname'"         "remote_validate_host: user@hostname"
+assert_true  "remote_validate_host '10.0.0.1'"              "remote_validate_host: adresse IP"
+assert_true  "remote_validate_host 'host.example.com'"      "remote_validate_host: FQDN"
+assert_true  "remote_validate_host 'user@host.example.com'" "remote_validate_host: user@FQDN"
+assert_false "( remote_validate_host '' ) 2>/dev/null"                "remote_validate_host: hôte vide rejeté"
+assert_false "( remote_validate_host 'host;evil' ) 2>/dev/null"       "remote_validate_host: point-virgule rejeté"
+assert_false "( remote_validate_host 'host evil' ) 2>/dev/null"       "remote_validate_host: espace rejeté"
+assert_false "( remote_validate_host 'host\$(cmd)' ) 2>/dev/null"     "remote_validate_host: substitution de commande rejetée"
+
+echo -e "\nRunning tests for remote_resolve_hosts..."
+
+assert_true '
+  _rrh_tmp=$(mktemp)
+  printf "host1\n# commentaire\n\nhost2\nhost3  # inline\n" > "$_rrh_tmp"
+  REMOTE_HOSTS=(); REMOTE_HOSTS_FILE="$_rrh_tmp"
+  remote_resolve_hosts
+  rm -f "$_rrh_tmp"; REMOTE_HOSTS_FILE=""
+  [[ "${#REMOTE_HOSTS[@]}" -eq 3 && "${REMOTE_HOSTS[0]}" == "host1" && "${REMOTE_HOSTS[2]}" == "host3" ]]
+' "remote_resolve_hosts: parse le fichier (ignore vides et commentaires)"
+
+assert_true '
+  _rrh_tmp=$(mktemp)
+  printf "  spaced-host  \n" > "$_rrh_tmp"
+  REMOTE_HOSTS=(); REMOTE_HOSTS_FILE="$_rrh_tmp"
+  remote_resolve_hosts
+  rm -f "$_rrh_tmp"; REMOTE_HOSTS_FILE=""
+  [[ "${#REMOTE_HOSTS[@]}" -eq 1 && "${REMOTE_HOSTS[0]}" == "spaced-host" ]]
+' "remote_resolve_hosts: supprime les espaces en début et fin de ligne"
+
+assert_false '
+  ( REMOTE_HOSTS=(); REMOTE_HOSTS_FILE="/tmp/nope_no_such_file_$$"; remote_resolve_hosts ) 2>/dev/null
+' "remote_resolve_hosts: échoue si le fichier est introuvable"
+
+assert_false '
+  ( REMOTE_HOSTS=(); REMOTE_HOSTS_FILE=""; remote_resolve_hosts ) 2>/dev/null
+' "remote_resolve_hosts: échoue si aucun hôte fourni"
+
+echo -e "\nRunning tests for remote_run_all guards..."
+
+assert_false '
+  ( _SCRIPT_SELF=""; REMOTE_HOSTS=(h1); remote_run_all ) 2>/dev/null
+' "remote_run_all: échoue si _SCRIPT_SELF vide (exécution via pipe)"
+
+echo -e "\nRunning tests for --remote option parsing..."
+
+assert_true '
+  REMOTE_HOSTS=(); RUN_MODE="interactive"
+  parse_args --remote --remote-hosts "h1,h2,h3"
+  [[ "${#REMOTE_HOSTS[@]}" -eq 3 && "${REMOTE_HOSTS[1]}" == "h2" && "$RUN_MODE" == "remote" ]]
+' "--remote-hosts: découpe les virgules et active RUN_MODE=remote"
+
+assert_true '
+  REMOTE_HOSTS=()
+  parse_args --remote --remote-hosts "h1" --remote-hosts "h2"
+  [[ "${#REMOTE_HOSTS[@]}" -eq 2 && "${REMOTE_HOSTS[0]}" == "h1" && "${REMOTE_HOSTS[1]}" == "h2" ]]
+' "--remote-hosts: accumule les appels répétés"
+
+assert_true '
+  REMOTE_PATH="/"
+  parse_args --remote --remote-hosts "h1" --remote-path "/var/log"
+  [[ "$REMOTE_PATH" == "/var/log" ]]
+' "--remote-path: positionne REMOTE_PATH"
+
+assert_true '
+  REMOTE_TIMEOUT=10
+  parse_args --remote --remote-hosts "h1" --remote-timeout 30
+  [[ "$REMOTE_TIMEOUT" == "30" ]]
+' "--remote-timeout: positionne REMOTE_TIMEOUT"
+
+assert_false '
+  ( parse_args --remote --remote-hosts "h1" --remote-timeout abc ) 2>/dev/null
+' "--remote-timeout: rejette une valeur non entière"
+
+assert_true '
+  REMOTE_SSH_OPTS=()
+  parse_args --remote --remote-hosts "h1" --remote-ssh-opt "-p 2222" --remote-ssh-opt "-i /key"
+  [[ "${#REMOTE_SSH_OPTS[@]}" -eq 2 && "${REMOTE_SSH_OPTS[0]}" == "-p 2222" ]]
+' "--remote-ssh-opt: accumule les options répétées"
+
 echo -e "\nSummary: $total tests, $((total - failed)) passed, $failed failed."
 
 if [ $failed -ne 0 ]; then
