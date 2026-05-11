@@ -1507,6 +1507,16 @@ draw_list() {
   local total=${#SUBDIR_PATHS[@]}
   local i row=0
 
+  # Précalcul du max pour les barres proportionnelles (mode size uniquement)
+  local max_val=0 bar_width=10
+  if [[ "$SORT_MODE" != "mtime" ]]; then
+    for (( i=0; i<total; i++ )); do
+      local _d="${SUBDIR_DATA[$i]:-0}"
+      [[ "$_d" == "__dotdot__" || ! "$_d" =~ ^[0-9]+$ ]] && continue
+      (( _d > max_val )) && max_val=$_d
+    done
+  fi
+
   if (( total == 0 )); then
     printf '%s\r\n' "$(_tui_pad "  Aucun sous-dossier accessible." "$COLUMNS")"
     (( row++ ))
@@ -1515,29 +1525,41 @@ draw_list() {
   for (( i=SCROLL_OFFSET; i<total && row<visible; i++, row++ )); do
     local full_path="${SUBDIR_PATHS[$i]}"
     local raw_data="${SUBDIR_DATA[$i]:-0}"
-    local metric safe_name
+    local metric safe_name bar_str
     if [[ "$raw_data" == "__dotdot__" ]]; then
       safe_name=".."
       metric="            "  # champ métrique vide
+      bar_str="          "   # barre vide (10 espaces)
     else
       local rel_path="${full_path#"${CURRENT_DIR}/"}"
       [[ "$rel_path" == "$full_path" ]] && rel_path="$(basename -- "$full_path")"
       safe_name="$(sanitize_for_display "$rel_path")"
       if [[ "$SORT_MODE" == "mtime" ]]; then
         metric="$(date_from_epoch "$raw_data")"
+        bar_str="          "
       else
         metric="$(human_size "$raw_data")"
+        local val="${raw_data:-0}"
+        [[ "$val" =~ ^[0-9]+$ ]] || val=0
+        local fill=0
+        (( max_val > 0 )) && fill=$(( bar_width * val / max_val ))
+        (( fill > bar_width )) && fill=$bar_width
+        local empty=$(( bar_width - fill ))
+        bar_str=""
+        local k
+        for (( k=0; k<fill;  k++ )); do bar_str+="█"; done
+        for (( k=0; k<empty; k++ )); do bar_str+="░"; done
       fi
     fi
 
-    local name_max=$(( COLUMNS - 30 ))
+    local name_max=$(( COLUMNS - 35 ))
     (( name_max < 5 )) && name_max=5
     if (( ${#safe_name} > name_max )); then
       safe_name="${safe_name:0:$((name_max-1))}…"
     fi
 
     local line_text
-    printf -v line_text '  %2d)  %12s   %s' "$((i+1))" "$metric" "$safe_name"
+    printf -v line_text '  %2d)  %12s  %s  %s' "$((i+1))" "$metric" "$bar_str" "$safe_name"
 
     if (( i == CURSOR )); then
       printf '%s%s%s\r\n' "$(tput rev 2>/dev/null || true)" \
