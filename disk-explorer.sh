@@ -998,6 +998,9 @@ print_tree_view() {
 # === MODULE: tui ===
 # TUI interactif : dessin, saisie, navigation
 
+_TUI_DF_CACHE_DIR=""
+_TUI_DF_CACHE_VAL=""
+
 pause_screen() {
   echo
   if [[ "$TUI_CAPABLE" -eq 1 ]]; then
@@ -1251,7 +1254,15 @@ show_header() {
   echo -e "  Dossier : ${YELLOW}${CURRENT_DIR}${NC}"
 
   local df_fields
-  if df_fields="$(get_df_fields)"; then
+  if [[ "$CURRENT_DIR" == "$_TUI_DF_CACHE_DIR" && -n "$_TUI_DF_CACHE_VAL" ]]; then
+    df_fields="$_TUI_DF_CACHE_VAL"
+  else
+    df_fields="$(get_df_fields 2>/dev/null)"
+    _TUI_DF_CACHE_DIR="$CURRENT_DIR"
+    _TUI_DF_CACHE_VAL="$df_fields"
+  fi
+
+  if [[ -n "$df_fields" ]]; then
     local size used avail use_p mounted use_pct fields
     IFS=$'\t' read -r fields mounted <<< "$df_fields"
     read -r size used avail use_p <<< "$fields"
@@ -1444,7 +1455,15 @@ _tui_pad() {
 
 draw_header() {
   local df_fields size used avail use_p mounted fields
-  if df_fields="$(get_df_fields 2>/dev/null)"; then
+  if [[ "$CURRENT_DIR" == "$_TUI_DF_CACHE_DIR" && -n "$_TUI_DF_CACHE_VAL" ]]; then
+    df_fields="$_TUI_DF_CACHE_VAL"
+  else
+    df_fields="$(get_df_fields 2>/dev/null)"
+    _TUI_DF_CACHE_DIR="$CURRENT_DIR"
+    _TUI_DF_CACHE_VAL="$df_fields"
+  fi
+
+  if [[ -n "$df_fields" ]]; then
     IFS=$'\t' read -r fields mounted <<< "$df_fields"
     read -r size used avail use_p <<< "$fields"
   else
@@ -1669,6 +1688,7 @@ navigate_legacy() {
 # Recharge SUBDIR_PATHS/SUBDIR_DATA en relançant le scan.
 # Si le scan échoue, SUBDIR_PATHS reste vide et LAST_WARNING est positionné.
 _tui_reload_subdirs() {
+  _TUI_DF_CACHE_VAL=""
   LAST_WARNING=""
   SUBDIR_PATHS=()
   SUBDIR_DATA=()
