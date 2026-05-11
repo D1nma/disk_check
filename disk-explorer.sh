@@ -1032,6 +1032,7 @@ ${BOLD}Navigation${NC}
   [0]     Retour arrière
 
 ${BOLD}Actions${NC}
+  [d]     Supprimer l'entrée sélectionnée (confirmation requise)
   [s]     Changer le tri (size / mtime)
   [a]     Changer le mode taille fichiers (real / apparent)
   [p]     Changer le mode d'analyse (partition / global)

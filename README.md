@@ -1,138 +1,158 @@
-# disk_check
+# disk-explorer
 
-Outil Bash interactif pour analyser rapidement l’occupation disque d’un système Linux, explorer les répertoires les plus volumineux, détecter les fichiers lourds et générer des rapports lisibles.
+A single-file Bash TUI for exploring disk usage — no installation required.
 
-## Fonctionnalités
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh)
+```
 
-- mode interactif pour naviguer dans l’arborescence
-- mode `summary` pour un résumé terminal rapide
-- mode `report` pour générer un rapport horodaté
-- tri par taille ou date de modification
-- taille réelle ou apparente pour les fichiers
-- exclusions par défaut et exclusions personnalisées
-- garde-fous runtime pour vérifier les dépendances GNU nécessaires
-- gestion propre des interruptions, fichiers temporaires et warnings de scan partiel
+![screenshot placeholder](docs/screenshot.png)
 
-## Prérequis
+---
 
-Environnement cible : Linux avec Bash et outils GNU.
+## Features
 
-Dépendances principales :
+- **Full-screen TUI** — arrow key navigation, proportional bars per entry, disk usage bar
+- **Mixed files + directories** in the same sorted list (like ncdu)
+- **Delete** selected item with inline confirmation (`d`)
+- **Summary mode** — non-interactive report for scripts and CI
+- **Report mode** — timestamped text report written to disk
+- **Tree mode** — size tree with `% of parent`
+- **Sort** by size or last modified date
+- **Exclusions** — configurable per-run or persistent via config menu
+- **No install** — single self-contained script, works via `curl | bash`
 
-- `bash` 4.3+
-- `find`
-- `du`
-- `sort`
-- `head`
-- `df`
-- `date`
-- `realpath` ou fallback lexical interne
-- `numfmt` recommandé
+---
 
-## Utilisation sans installation (curl)
+## Quick start
 
-Le script peut être exécuté directement depuis n'importe quelle machine sans installation préalable.
+### Interactive TUI
 
-Deux URLs disponibles — préférer **GitHub raw** sur les réseaux d'entreprise (DuckDNS peut être bloqué par les proxies/firewalls) :
-
-| Source | URL |
+| Shell | Command |
 |---|---|
-| GitHub raw (recommandé) | `https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh` |
-| Serveur perso | `https://maxcv.duckdns.org/disk-explorer.sh` |
+| bash / zsh | `bash <(curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh)` |
+| fish | `bash (curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh \| psub)` |
+| any (universal) | `curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh -o /tmp/de.sh && bash /tmp/de.sh` |
 
-> Si tu obtiens `curl: (35) OpenSSL SSL_connect: Connection reset`, le proxy d'entreprise bloque DuckDNS — utilise l'URL GitHub raw.
-
-### Résumé rapide (toutes shells)
+### Summary only (all shells, pipe-friendly)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh | bash
 ```
 
-Lance un rapport `--summary` sur le répertoire courant. Fonctionne dans tous les shells car stdin n'est pas requis.
+> **Why two commands?**  
+> `curl URL | bash` feeds the script via stdin, which prevents the TUI from reading keystrokes.  
+> Process substitution (`<(...)` or `psub`) downloads the script to a file descriptor first, leaving stdin connected to the terminal.
 
-### Mode interactif (TUI)
+> **Corporate proxies:** if you get `curl: (35) OpenSSL SSL_connect: Connection reset`, your proxy is blocking DuckDNS or custom domains. The `raw.githubusercontent.com` URL above works on virtually all corporate networks.
 
-L'interface de navigation nécessite que stdin soit un terminal.
-La commande dépend du shell utilisé :
+---
 
-| Shell | Commande |
-|---|---|
-| bash / zsh | `bash <(curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh)` |
-| fish | `bash (curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh \| psub)` |
-| universel | `curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh -o /tmp/de.sh && bash /tmp/de.sh` |
-
-> **Pourquoi deux commandes ?**
-> Avec `curl URL | bash`, le script est lu depuis stdin, ce qui empêche la TUI de lire les touches clavier.
-> La substitution de processus (`<(...)` ou `psub`) télécharge d'abord le script dans un descripteur de fichier
-> temporaire, laissant stdin connecté au terminal.
-
-## Installation
+## Usage
 
 ```bash
-# Déjà exécutable dans ce dépôt ; sinon :
-chmod +x ./disk-explorer.sh
-```
-
-## Usage rapide
-
-```bash
+# Current directory (interactive TUI)
 ./disk-explorer.sh
+
+# Specific path
 ./disk-explorer.sh /var
+
+# Quick summary (non-interactive)
 ./disk-explorer.sh --summary /home
-./disk-explorer.sh --self-check
-./disk-explorer.sh --tree --tree-depth 3 /home
+
+# Timestamped report
 ./disk-explorer.sh --report --report-dir /tmp/reports /srv
+
+# Tree view
+./disk-explorer.sh --tree --tree-depth 3 /home
+
+# Custom scan
 ./disk-explorer.sh --mode global --sort mtime --top-count 20 --top-files 30 /data
+
+# Diagnose dependencies
+./disk-explorer.sh --self-check
 ```
 
-## Options principales
+### TUI key bindings
+
+| Key | Action |
+|---|---|
+| `↑` `↓` | Navigate list |
+| `Enter` | Open directory |
+| `d` | Delete selected item (confirmation required) |
+| `0` | Go to parent directory |
+| `1`–`9` | Jump directly to entry N |
+| `s` | Toggle sort: size / mtime |
+| `a` | Toggle file size: real blocks / apparent |
+| `p` | Toggle scan mode: partition / global |
+| `f` | Show largest files (recursive) |
+| `r` | Generate report |
+| `e` | Show/edit exclusions |
+| `c` | Config menu |
+| `h` / `?` | Help |
+| `q` | Quit |
+
+---
+
+## Options
 
 ```text
---path DIR
---mode partition|global
---sort size|mtime
+--path DIR               Directory to analyse (default: current)
+--mode partition|global  Stay on one filesystem or traverse all mounts
+--sort size|mtime        Sort by size (default) or last modified
 --file-size real|apparent
---top-count N
---top-files N
---max-depth N
---exclude DIR
---no-default-excludes
---summary
---tree
+--top-count N            Max directories shown (default: 15)
+--top-files N            Max files shown in file view
+--max-depth N            Max recursion depth for file scan
+--exclude DIR            Exclude a directory (repeatable)
+--no-default-excludes    Disable built-in exclusions (proc, sys, dev…)
+--summary                Non-interactive summary then exit
+--tree                   Tree view with sizes and % of parent
 --tree-depth N
---self-check
---report
+--report                 Write timestamped report to file
 --report-dir DIR
 --no-color
 --no-spinner
+--self-check             Diagnose runtime dependencies
 --help
 ```
 
-## Notes de fonctionnement
+---
 
-- En mode `partition`, le scan reste centré sur le système de fichiers du chemin courant.
-- En mode `global`, le scan peut traverser plusieurs montages.
-- Les exclusions utilisateur sont traitées de manière littérale.
-- Le rapport est d’abord écrit dans un fichier temporaire puis déplacé de manière atomique.
-- Le script est pensé pour GNU/Linux. Il ne vise pas une compatibilité BSD/macOS complète.
-- En cas de dépendance manquante, le script affiche désormais une suggestion d'installation adaptée à la distribution (si détectée).
-- `--self-check` affiche maintenant un diagnostic détaillé (plateforme, Bash, commandes requises, support GNU, état `numfmt`).
-- `--tree` fournit une vue arborescente des tailles (style TreeSize CLI), avec tri des enfants par taille et `% du parent`, limitée par `--tree-depth`.
+## Requirements
 
-## Structure du dépôt
+GNU/Linux with Bash ≥ 4.4. Standard GNU coreutils (`find`, `du`, `sort`, `head`, `df`, `date`). `numfmt` recommended (graceful fallback if absent).
 
-```text
-.
-├── disk-explorer.sh
-└── README.md
+macOS with Homebrew GNU coreutils is partially supported.
+
+---
+
+## Repository structure
+
+```
+disk-explorer.sh      # single distributable file (generated by build.sh)
+build.sh              # assembles src/ → disk-explorer.sh
+src/
+  main.sh             # entry point, arg parsing, globals
+  utils.sh            # pure helpers (human_size, sanitize, platform…)
+  scan.sh             # du/find scan functions, temp file management
+  display.sh          # non-interactive modes (summary, report, tree)
+  tui.sh              # full-screen TUI (draw, input, navigation)
+tests/
+  run_tests.sh        # custom test suite
+  *.bats              # bats test suite
+docs/
+  superpowers/        # design specs and implementation plans
 ```
 
-## Conseils d’exploitation
+Build after editing any `src/` file:
 
-- lancer avec des privilèges adaptés si certaines zones sont inaccessibles
-- utiliser `--max-depth` pour limiter le coût sur de très grosses arborescences
-- conserver les exclusions par défaut sur les systèmes de production
+```bash
+./build.sh
+```
 
-## Licence
+---
 
-Usage interne / à préciser.
+## License
+
+MIT
