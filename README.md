@@ -6,7 +6,19 @@ A single-file Bash TUI for exploring disk usage — no installation required.
 bash <(curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh)
 ```
 
-![screenshot placeholder](docs/screenshot.png)
+```
+DISK EXPLORER  /home/user  MÊME PARTITION · size
+████████░░░░░░░░░░░ 42%   58 Go / 230 Go
+────────────────────────────────────────────────────────────────────────────
+   1)    21,3 Go  ██████████  .cargo/
+   2)    18,7 Go  ████████░░  node_modules/
+   3)     6,1 Go  ███░░░░░░░  .local/
+   4)   512,0 Mo  ██░░░░░░░░  archive.tar.gz
+   5)   128,0 Mo  █░░░░░░░░░  Downloads/
+────────────────────────────────────────────────────────────────────────────
+  [↑↓] naviguer  [Entrée] ouvrir  [d] supprimer  [1-5] accès direct  [0] retour
+  [s] tri  [a] taille  [f] fichiers  [r] rapport  [h] aide  [q] quitter
+```
 
 ---
 
