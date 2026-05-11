@@ -928,7 +928,7 @@ print_tree_view() {
     tree_size_map["$full_path"]="$raw_size"
 
     if [[ "$full_path" != "$CURRENT_DIR" ]]; then
-      parent="$(dirname -- "$full_path")"
+      parent="${full_path%/*}"; parent="${parent:-/}"
       if path_is_equal_or_within "$parent" "$CURRENT_DIR"; then
         tree_children_map["$parent"]+="$full_path"$'\n'
       fi
