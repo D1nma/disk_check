@@ -1,24 +1,29 @@
 # === MODULE: display ===
 # Sorties non-TUI : summary, report, tree, self-check
 
-self_check_report() {
-  local -i rc=0
-  local -a missing_cmds=()
-
-  echo "=== DISK EXPLORER :: SELF-CHECK ==="
-
+_self_check_platform() {
   case "${PLATFORM:-}" in
     linux)  echo "[OK] Plateforme Linux détectée (${OSTYPE:-unknown})" ;;
     macos)  echo "[OK] Plateforme macOS détectée (${OSTYPE:-unknown})" ;;
-    *)      echo "[KO] Plateforme non reconnue (${OSTYPE:-unknown})"; rc=1 ;;
+    *)      echo "[KO] Plateforme non reconnue (${OSTYPE:-unknown})"; return 1 ;;
   esac
+  return 0
+}
 
+_self_check_bash_version() {
   if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )); then
     echo "[OK] Bash >= 4.4 (${BASH_VERSION})"
+    return 0
   else
     echo "[KO] Bash >= 4.4 requis (actuel: ${BASH_VERSION})"
-    rc=1
+    return 1
   fi
+}
+
+_self_check_commands() {
+  # shellcheck disable=SC2178
+  local -n missing_ref=$1
+  local -i res=0
 
   local -A _cmd_map=(
     [awk]="awk"
@@ -32,7 +37,7 @@ self_check_report() {
     [df]="df"
     [tail]="tail"
   )
-  local canonical resolved
+  local canonical resolved cmd
   for canonical in awk find sort head du numfmt date mktemp df tail; do
     resolved="${_cmd_map[$canonical]}"
     if command -v "$resolved" >/dev/null 2>&1; then
@@ -43,62 +48,82 @@ self_check_report() {
       fi
     else
       echo "[KO] Commande manquante: $resolved"
-      missing_cmds+=("$resolved")
-      rc=1
+      missing_ref+=("$resolved")
+      res=1
     fi
   done
+  return "$res"
+}
+
+_self_check_features() {
+  local -a missing_cmds=("${@}")
+  local -i res=0
 
   if ((${#missing_cmds[@]} > 0)); then
     local os_id
     os_id="$(detect_os_id)"
     echo "Suggestion d'installation ($os_id): $(install_hint "$os_id" "${missing_cmds[@]}")"
     echo "[INFO] Tests des fonctionnalités GNU ignorés (dépendances manquantes)."
-  else
-    local req_dir
-    req_dir=$(mktemp -d "${TMPDIR:-/tmp}/disk-explorer.selfcheck.XXXXXX") || {
-      echo "[KO] impossible de créer un répertoire temporaire pour les tests GNU"
-      return 1
-    }
-
-    if "$FIND_CMD" "$req_dir" -maxdepth 0 -printf '' >/dev/null 2>&1; then
-      echo "[OK] GNU find: support -printf"
-    else
-      echo "[KO] GNU find: -printf non supporté"
-      rc=1
-    fi
-    if printf '%b' 'a\0' | "$SORT_CMD" -z >/dev/null 2>&1; then
-      echo "[OK] GNU sort: support -z"
-    else
-      echo "[KO] GNU sort: -z non supporté"
-      rc=1
-    fi
-    if printf '%b' 'a\0' | "$HEAD_CMD" -z -n 1 >/dev/null 2>&1; then
-      echo "[OK] GNU head: support -z"
-    else
-      echo "[KO] GNU head: -z non supporté"
-      rc=1
-    fi
-    if "$DU_CMD" -0 --max-depth=0 "$req_dir" >/dev/null 2>&1; then
-      echo "[OK] GNU du: support -0"
-    else
-      echo "[KO] GNU du: -0 non supporté"
-      rc=1
-    fi
-    local _date_ok=0
-    if [[ "$PLATFORM" == "macos" ]]; then
-      date -r 0 '+%Y-%m-%d %H:%M' >/dev/null 2>&1 && _date_ok=1
-    else
-      date -d '@0' '+%Y-%m-%d %H:%M' >/dev/null 2>&1 && _date_ok=1
-    fi
-    if (( _date_ok )); then
-      echo "[OK] GNU/BSD date: support epoch"
-    else
-      echo "[KO] date: support epoch non disponible"
-      rc=1
-    fi
-
-    rm -rf -- "$req_dir"
+    return 0
   fi
+
+  local req_dir
+  req_dir=$(mktemp -d "${TMPDIR:-/tmp}/disk-explorer.selfcheck.XXXXXX") || {
+    echo "[KO] impossible de créer un répertoire temporaire pour les tests GNU"
+    return 1
+  }
+
+  if "$FIND_CMD" "$req_dir" -maxdepth 0 -printf '' >/dev/null 2>&1; then
+    echo "[OK] GNU find: support -printf"
+  else
+    echo "[KO] GNU find: -printf non supporté"
+    res=1
+  fi
+  if printf '%b' 'a\0' | "$SORT_CMD" -z >/dev/null 2>&1; then
+    echo "[OK] GNU sort: support -z"
+  else
+    echo "[KO] GNU sort: -z non supporté"
+    res=1
+  fi
+  if printf '%b' 'a\0' | "$HEAD_CMD" -z -n 1 >/dev/null 2>&1; then
+    echo "[OK] GNU head: support -z"
+  else
+    echo "[KO] GNU head: -z non supporté"
+    res=1
+  fi
+  if "$DU_CMD" -0 --max-depth=0 "$req_dir" >/dev/null 2>&1; then
+    echo "[OK] GNU du: support -0"
+  else
+    echo "[KO] GNU du: -0 non supporté"
+    res=1
+  fi
+  local _date_ok=0
+  if [[ "$PLATFORM" == "macos" ]]; then
+    date -r 0 '+%Y-%m-%d %H:%M' >/dev/null 2>&1 && _date_ok=1
+  else
+    date -d '@0' '+%Y-%m-%d %H:%M' >/dev/null 2>&1 && _date_ok=1
+  fi
+  if (( _date_ok )); then
+    echo "[OK] GNU/BSD date: support epoch"
+  else
+    echo "[KO] date: support epoch non disponible"
+    res=1
+  fi
+
+  rm -rf -- "$req_dir"
+  return "$res"
+}
+
+self_check_report() {
+  local -i rc=0
+  local -a missing_cmds=()
+
+  echo "=== DISK EXPLORER :: SELF-CHECK ==="
+
+  _self_check_platform || rc=1
+  _self_check_bash_version || rc=1
+  _self_check_commands missing_cmds || rc=1
+  _self_check_features "${missing_cmds[@]}" || rc=1
 
   if [[ "$HAVE_NUMFMT" -eq 1 ]]; then
     echo "[OK] numfmt détecté (format humain précis activé)"
