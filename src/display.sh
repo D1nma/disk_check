@@ -37,7 +37,7 @@ _self_check_commands() {
     [df]="df"
     [tail]="tail"
   )
-  local canonical resolved cmd
+  local canonical resolved
   for canonical in awk find sort head du numfmt date mktemp df tail; do
     resolved="${_cmd_map[$canonical]}"
     if command -v "$resolved" >/dev/null 2>&1; then
