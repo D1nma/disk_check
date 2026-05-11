@@ -1,0 +1,279 @@
+<h2>Layout de l'écran plein terminal</h2>
+<p class="subtitle">Trois variantes pour organiser les zones. Clique sur celle qui te parle le plus.</p>
+
+<style>
+.tui-wrap {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  background: #1a1a1a;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #444;
+  width: 100%;
+  box-sizing: border-box;
+}
+.tui-header {
+  background: #003366;
+  color: #fff;
+  padding: 4px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #005bb5;
+}
+.tui-header-compact {
+  background: #1e1e1e;
+  color: #569cd6;
+  padding: 3px 10px;
+  border-bottom: 1px solid #333;
+  font-size: 11px;
+}
+.tui-path {
+  color: #ffd700;
+  font-weight: bold;
+}
+.tui-stats {
+  color: #7ec8e3;
+  font-size: 11px;
+}
+.tui-body {
+  background: #1a1a1a;
+  color: #d4d4d4;
+  padding: 4px 0;
+  min-height: 160px;
+}
+.tui-row {
+  padding: 1px 10px;
+  display: flex;
+  gap: 12px;
+}
+.tui-row:hover { background: #2a2a2a; }
+.tui-row.highlight { background: #0e3a5c; color: #fff; }
+.tui-num { color: #888; min-width: 24px; }
+.tui-size { color: #4ec9b0; min-width: 80px; text-align: right; }
+.tui-bar { color: #264f78; min-width: 60px; }
+.tui-bar-fill { color: #569cd6; }
+.tui-name { color: #ce9178; }
+.tui-name.dir { color: #dcdcaa; }
+.tui-divider {
+  border-top: 1px solid #333;
+  margin: 0;
+}
+.tui-footer {
+  background: #252526;
+  color: #888;
+  padding: 3px 10px;
+  font-size: 11px;
+  border-top: 1px solid #333;
+  display: flex;
+  justify-content: space-between;
+}
+.tui-key { color: #ffd700; }
+.tui-statusbar {
+  background: #007acc;
+  color: #fff;
+  padding: 2px 10px;
+  font-size: 11px;
+  display: flex;
+  justify-content: space-between;
+}
+.tui-warn { color: #ff9900; }
+.tui-section-title {
+  color: #569cd6;
+  padding: 4px 10px 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.tui-split { display: flex; min-height: 160px; }
+.tui-left { width: 60%; border-right: 1px solid #333; }
+.tui-right { width: 40%; padding: 0; }
+.tui-scrollhint { color: #555; padding: 1px 10px; font-size: 11px; }
+</style>
+
+<div class="cards" style="flex-direction: column; gap: 20px;">
+
+  <!-- Option A -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>A — Header compact + liste scrollable + barre de touches fixe</h3>
+      <p>L'en-tête tient sur 2 lignes. La liste de dossiers occupe tout l'espace disponible (adapté à la hauteur du terminal). Les raccourcis sont toujours visibles en bas.</p>
+    </div>
+    <div class="card-image" style="padding: 10px;">
+      <div class="tui-wrap">
+        <div class="tui-header">
+          <span>DISK EXPLORER &nbsp; <span class="tui-path">/home/maxence/Projet</span></span>
+          <span class="tui-stats">partition · tri: taille · 125,4 Go / 500 Go (25%)</span>
+        </div>
+        <div class="tui-header-compact">
+          <span>██████░░░░░░░░░░░░░░ 25%</span>
+          &nbsp;|&nbsp; <span class="tui-warn">⚠ scan partiel détecté</span>
+        </div>
+        <div class="tui-body">
+          <div class="tui-section-title">Sous-dossiers (top 15)</div>
+          <div class="tui-row highlight">
+            <span class="tui-num"> 1)</span>
+            <span class="tui-size">48,2 Go</span>
+            <span class="tui-bar"><span class="tui-bar-fill">████████</span>░░</span>
+            <span class="tui-name dir">node_modules/</span>
+          </div>
+          <div class="tui-row">
+            <span class="tui-num"> 2)</span>
+            <span class="tui-size">21,7 Go</span>
+            <span class="tui-bar"><span class="tui-bar-fill">████</span>░░░░░░</span>
+            <span class="tui-name dir">.cargo/</span>
+          </div>
+          <div class="tui-row">
+            <span class="tui-num"> 3)</span>
+            <span class="tui-size">12,1 Go</span>
+            <span class="tui-bar"><span class="tui-bar-fill">██</span>░░░░░░░░</span>
+            <span class="tui-name dir">docker/</span>
+          </div>
+          <div class="tui-row">
+            <span class="tui-num"> 4)</span>
+            <span class="tui-size"> 8,3 Go</span>
+            <span class="tui-bar"><span class="tui-bar-fill">█</span>░░░░░░░░░</span>
+            <span class="tui-name dir">build/</span>
+          </div>
+          <div class="tui-row">
+            <span class="tui-num"> 5)</span>
+            <span class="tui-size"> 4,6 Go</span>
+            <span class="tui-bar"><span class="tui-bar-fill">▌</span>░░░░░░░░░</span>
+            <span class="tui-name dir">venv/</span>
+          </div>
+          <div class="tui-scrollhint">↓ 10 autres dossiers…</div>
+        </div>
+        <div class="tui-divider"></div>
+        <div class="tui-footer">
+          <span><span class="tui-key">[1-15]</span> entrer &nbsp; <span class="tui-key">[0]</span> retour &nbsp; <span class="tui-key">[s]</span> tri &nbsp; <span class="tui-key">[f]</span> fichiers &nbsp; <span class="tui-key">[r]</span> rapport</span>
+          <span><span class="tui-key">[h]</span> aide &nbsp; <span class="tui-key">[q]</span> quitter</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Option B -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>B — Barre de statut VS Code en bas + contenu plein écran</h3>
+      <p>Pas de footer dédié aux touches — elles tiennent sur une seule barre de statut colorée (bleu, comme VS Code ou tmux). L'espace liste est maximal.</p>
+    </div>
+    <div class="card-image" style="padding: 10px;">
+      <div class="tui-wrap">
+        <div class="tui-header">
+          <span>DISK EXPLORER &nbsp; <span class="tui-path">/home/maxence/Projet</span></span>
+          <span class="tui-stats">partition · taille · 125,4 Go / 500 Go</span>
+        </div>
+        <div class="tui-body">
+          <div class="tui-row">
+            <span class="tui-num"> 1)</span>
+            <span class="tui-size">48,2 Go</span>
+            <span class="tui-bar"><span class="tui-bar-fill">████████</span>░░</span>
+            <span class="tui-name dir">node_modules/</span>
+          </div>
+          <div class="tui-row">
+            <span class="tui-num"> 2)</span>
+            <span class="tui-size">21,7 Go</span>
+            <span class="tui-bar"><span class="tui-bar-fill">████</span>░░░░░░</span>
+            <span class="tui-name dir">.cargo/</span>
+          </div>
+          <div class="tui-row">
+            <span class="tui-num"> 3)</span>
+            <span class="tui-size">12,1 Go</span>
+            <span class="tui-bar"><span class="tui-bar-fill">██</span>░░░░░░░░</span>
+            <span class="tui-name dir">docker/</span>
+          </div>
+          <div class="tui-row">
+            <span class="tui-num"> 4)</span>
+            <span class="tui-size"> 8,3 Go</span>
+            <span class="tui-bar"><span class="tui-bar-fill">█</span>░░░░░░░░░</span>
+            <span class="tui-name dir">build/</span>
+          </div>
+          <div class="tui-row">
+            <span class="tui-num"> 5)</span>
+            <span class="tui-size"> 4,6 Go</span>
+            <span class="tui-bar"><span class="tui-bar-fill">▌</span>░░░░░░░░░</span>
+            <span class="tui-name dir">venv/</span>
+          </div>
+          <div class="tui-row">
+            <span class="tui-num"> 6)</span>
+            <span class="tui-size"> 2,1 Go</span>
+            <span class="tui-bar"><span class="tui-bar-fill">▏</span>░░░░░░░░░</span>
+            <span class="tui-name dir">.npm/</span>
+          </div>
+          <div class="tui-scrollhint">↓ 9 autres dossiers…</div>
+        </div>
+        <div class="tui-statusbar">
+          <span><span style="background:#005a9e;padding:0 6px;">[1-15]entrer</span> &nbsp; [0]retour &nbsp; [s]tri &nbsp; [a]taille &nbsp; [f]fichiers &nbsp; [r]rapport &nbsp; [h]aide</span>
+          <span style="color:#ffd700;">⚠ scan partiel</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Option C -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>C — Vue splitée : dossiers à gauche, infos à droite</h3>
+      <p>Le terminal est divisé verticalement : liste des dossiers à gauche (60%), panneau d'infos à droite (40%) avec stats disque, exclusions actives, dernière action.</p>
+    </div>
+    <div class="card-image" style="padding: 10px;">
+      <div class="tui-wrap">
+        <div class="tui-header">
+          <span>DISK EXPLORER &nbsp; <span class="tui-path">/home/maxence/Projet</span></span>
+          <span class="tui-stats">partition · taille · 125,4 Go / 500 Go</span>
+        </div>
+        <div class="tui-split">
+          <div class="tui-left">
+            <div class="tui-section-title">Sous-dossiers</div>
+            <div class="tui-row highlight">
+              <span class="tui-num"> 1)</span>
+              <span class="tui-size">48,2 Go</span>
+              <span class="tui-name dir">node_modules/</span>
+            </div>
+            <div class="tui-row">
+              <span class="tui-num"> 2)</span>
+              <span class="tui-size">21,7 Go</span>
+              <span class="tui-name dir">.cargo/</span>
+            </div>
+            <div class="tui-row">
+              <span class="tui-num"> 3)</span>
+              <span class="tui-size">12,1 Go</span>
+              <span class="tui-name dir">docker/</span>
+            </div>
+            <div class="tui-row">
+              <span class="tui-num"> 4)</span>
+              <span class="tui-size"> 8,3 Go</span>
+              <span class="tui-name dir">build/</span>
+            </div>
+            <div class="tui-row">
+              <span class="tui-num"> 5)</span>
+              <span class="tui-size"> 4,6 Go</span>
+              <span class="tui-name dir">venv/</span>
+            </div>
+            <div class="tui-scrollhint">↓ 10 autres…</div>
+          </div>
+          <div class="tui-right" style="padding: 6px 10px; color: #bbb; font-size: 11px;">
+            <div style="color:#569cd6; margin-bottom:6px;">── DISQUE ──</div>
+            <div>Utilisé   : <span style="color:#4ec9b0;">125,4 Go</span></div>
+            <div>Libre     : <span style="color:#4ec9b0;">374,6 Go</span></div>
+            <div>Total     : <span style="color:#888;">500 Go</span></div>
+            <div style="margin: 6px 0;">██████░░░░░░░░░░ 25%</div>
+            <div style="color:#569cd6; margin: 8px 0 4px;">── CONFIG ──</div>
+            <div>Tri       : taille</div>
+            <div>Mode      : partition</div>
+            <div>Exclusions: 2</div>
+            <div style="color:#569cd6; margin: 8px 0 4px;">── ACTION ──</div>
+            <div class="tui-warn">⚠ scan partiel détecté</div>
+          </div>
+        </div>
+        <div class="tui-footer">
+          <span><span class="tui-key">[1-15]</span> entrer &nbsp; <span class="tui-key">[0]</span> retour &nbsp; <span class="tui-key">[s]</span> tri &nbsp; <span class="tui-key">[f]</span> fichiers</span>
+          <span><span class="tui-key">[h]</span> aide &nbsp; <span class="tui-key">[q]</span> quitter</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>

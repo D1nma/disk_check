@@ -1,0 +1,4 @@
+{"type":"server-started","port":50921,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:50921","screen_dir":"/Users/maxencehedin/Projet/disk_check/.superpowers/brainstorm/25626-1778314847"}
+{"type":"screen-added","file":"/Users/maxencehedin/Projet/disk_check/.superpowers/brainstorm/25626-1778314847/tui-layout.html"}
+{"type":"screen-added","file":"/Users/maxencehedin/Projet/disk_check/.superpowers/brainstorm/25626-1778314847/waiting.html"}
+{"type":"server-stopped","reason":"idle timeout"}

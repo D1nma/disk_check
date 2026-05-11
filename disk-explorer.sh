@@ -1469,7 +1469,7 @@ draw_header() {
 
   # Ligne 1 : titre + chemin + mode
   local line1_plain="DISK EXPLORER  ${CURRENT_DIR}  $(analysis_label) · $SORT_MODE"
-  printf '%s\n' "$(_tui_pad "$line1_plain" "$COLUMNS")"
+  printf '%s\r\n' "$(_tui_pad "$line1_plain" "$COLUMNS")"
 
   # Ligne 2 : barre de progression
   local use_int="${use_p//[^0-9]/}"
@@ -1489,12 +1489,12 @@ draw_header() {
   local warn_suffix=""
   [[ -n "$LAST_WARNING" ]] && warn_suffix="  ⚠ $(sanitize_for_display "$LAST_WARNING")"
   local line2_plain="${bar} ${use_p}  ${used_h} / ${total_h}${warn_suffix}"
-  printf '%s\n' "$(_tui_pad "$line2_plain" "$COLUMNS")"
+  printf '%s\r\n' "$(_tui_pad "$line2_plain" "$COLUMNS")"
 
   # Séparateur haut
   local sep=""
   for (( i=0; i<COLUMNS; i++ )); do sep+="─"; done
-  printf '%s\n' "${sep:0:$COLUMNS}"
+  printf '%s\r\n' "${sep:0:$COLUMNS}"
 }
 
 # ── Zone liste avec viewport et curseur ──────────────────────────────────
@@ -1504,6 +1504,11 @@ draw_list() {
   (( visible < 1 )) && visible=1
   local total=${#SUBDIR_PATHS[@]}
   local i row=0
+
+  if (( total == 0 )); then
+    printf '%s\r\n' "$(_tui_pad "  Aucun sous-dossier accessible." "$COLUMNS")"
+    (( row++ ))
+  fi
 
   for (( i=SCROLL_OFFSET; i<total && row<visible; i++, row++ )); do
     local full_path="${SUBDIR_PATHS[$i]}"
@@ -1531,17 +1536,17 @@ draw_list() {
     printf -v line_text '  %2d)  %12s   %s' "$((i+1))" "$metric" "$safe_name"
 
     if (( i == CURSOR )); then
-      printf '%s%s%s\n' "$(tput rev 2>/dev/null || true)" \
+      printf '%s%s%s\r\n' "$(tput rev 2>/dev/null || true)" \
         "$(_tui_pad "$line_text" "$COLUMNS")" \
         "$(tput sgr0 2>/dev/null || true)"
     else
-      printf '%s\n' "$(_tui_pad "$line_text" "$COLUMNS")"
+      printf '%s\r\n' "$(_tui_pad "$line_text" "$COLUMNS")"
     fi
   done
 
   # Remplir les lignes vides restantes
   while (( row < visible )); do
-    printf '%s\n' "$(_tui_pad "" "$COLUMNS")"
+    printf '%s\r\n' "$(_tui_pad "" "$COLUMNS")"
     (( row++ ))
   done
 
@@ -1551,7 +1556,7 @@ draw_list() {
     # Écraser la dernière ligne de la zone liste
     tput cup $(( 2 + 1 + visible - 1 )) 0 2>/dev/null || true
     local hint="  ↓ $remaining autre(s)…"
-    printf '%s\n' "$(_tui_pad "$hint" "$COLUMNS")"
+    printf '%s\r\n' "$(_tui_pad "$hint" "$COLUMNS")"
   fi
 }
 
@@ -1560,11 +1565,18 @@ draw_list() {
 draw_footer() {
   local sep="" i
   for (( i=0; i<COLUMNS; i++ )); do sep+="─"; done
-  printf '%s\n' "${sep:0:$COLUMNS}"
+  printf '%s\r\n' "${sep:0:$COLUMNS}"
   local n="${#SUBDIR_PATHS[@]}"
   local f1="  [↑↓] naviguer  [Entrée] ouvrir  [1-$n] accès direct  [0] retour"
-  local f2="  [s] tri  [a] taille  [f] fichiers  [r] rapport  [h] aide  [c] config  [q] quitter"
-  printf '%s\n' "$(_tui_pad "$f1" "$COLUMNS")"
+  local -a bindings=("[s] tri" "[a] taille" "[f] fichiers" "[r] rapport" "[h] aide" "[c] config" "[q] quitter")
+  local f2="  " sep2="" b candidate
+  for b in "${bindings[@]}"; do
+    candidate="${f2}${sep2}${b}"
+    (( ${#candidate} > COLUMNS )) && break
+    f2="$candidate"
+    sep2=" "
+  done
+  printf '%s\r\n' "$(_tui_pad "$f1" "$COLUMNS")"
   printf '%s' "$(_tui_pad "$f2" "$COLUMNS")"
 }
 
@@ -1598,7 +1610,7 @@ tui_draw() {
   tput ed      2>/dev/null || true   # efface jusqu'à fin d'écran (gère rétrécissement)
 
   if (( LINES < 9 )); then
-    printf 'Terminal trop petit (%d lignes). Agrandissez la fenêtre.\n' "$LINES"
+    printf 'Terminal trop petit (%d lignes). Agrandissez la fenêtre.\r\n' "$LINES"
     _NEEDS_REDRAW=0
     return
   fi
@@ -1727,8 +1739,14 @@ navigate() {
     return
   fi
 
-  _tui_reload_subdirs
   tui_enter
+  LINES=$(tput lines 2>/dev/null || echo 24)
+  COLUMNS=$(tput cols  2>/dev/null || echo 80)
+  tput cup 0 0 2>/dev/null || true
+  tput ed      2>/dev/null || true
+  printf '%s\r\n' "$(_tui_pad "DISK EXPLORER  ${CURRENT_DIR}  $(analysis_label) · ${SORT_MODE}" "$COLUMNS")"
+  printf '%s\r\n' "$(_tui_pad "  Analyse en cours…" "$COLUMNS")"
+  _tui_reload_subdirs
   _NEEDS_REDRAW=1
 
   local key target prev_dir idx
