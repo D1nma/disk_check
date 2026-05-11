@@ -87,6 +87,23 @@ _NEEDS_REDRAW=0
 CURSOR=0
 SCROLL_OFFSET=0
 
+# ================== EXÉCUTION DISTANTE (SSH) ==================
+declare -a REMOTE_HOSTS=()   # hôtes passés via --remote-hosts
+REMOTE_HOSTS_FILE=""         # fichier d'hôtes (--remote-hosts-file)
+REMOTE_PATH="/"              # répertoire scanné sur chaque cible
+REMOTE_REPORT_DIR="$(pwd)/remote-reports"  # dossier local pour les rapports
+REMOTE_TIMEOUT=10            # ConnectTimeout SSH en secondes
+declare -a REMOTE_SSH_OPTS=() # options SSH supplémentaires (--remote-ssh-opt)
+
+# Chemin absolu du script courant ; vide si lancé via pipe (bash -s).
+# Utilisé par remote_run_host pour streamer le script sur SSH.
+_SCRIPT_SELF=""
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  _self_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+  _SCRIPT_SELF="${_self_dir}/$(basename -- "${BASH_SOURCE[0]}")"
+  unset _self_dir
+fi
+
 RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' DIM='' NC=''
 
 # ================== TRAPS ==================
@@ -269,6 +286,18 @@ Options:
   --no-spinner              Désactive le spinner
   -h, --help                Aide
 
+Mode Remote SSH (--remote) :
+  --remote                  Lance le scan sur des machines distantes via SSH
+  --remote-hosts HÔTES      Hôtes cibles, séparés par des virgules
+                            Exemples: user@host1,host2  ou  root@10.0.0.1
+                            (répétable : --remote-hosts h1 --remote-hosts h2)
+  --remote-hosts-file FILE  Fichier texte, un hôte par ligne (# = commentaire)
+  --remote-path DIR         Répertoire à scanner sur chaque machine (défaut: /)
+  --remote-report-dir DIR   Dossier local où stocker les rapports (défaut: ./remote-reports)
+  --remote-timeout N        ConnectTimeout SSH en secondes (défaut: 10)
+  --remote-ssh-opt OPT      Option SSH brute passée à ssh(1), répétable
+                            Exemples: -i ~/.ssh/id_ed25519  -p 2222
+
 Remarques:
   - Le mode PARTITION/CENTREON reste sur le même filesystem.
   - Le tri mtime des sous-dossiers repose sur la date du dossier lui-même,
@@ -279,6 +308,9 @@ Remarques:
   - Sur macOS, les outils GNU sont installés automatiquement via Homebrew si nécessaire.
   - Les exclusions utilisateur sont traitées comme des chemins littéraux :
     les métacaractères de glob (* ? [ ]) sont refusés.
+  - Le mode --remote nécessite une authentification SSH par clé (BatchMode=yes).
+    Chaque machine distante doit avoir Bash >= 4.4 et les GNU coreutils installés.
+    Les exclusions locales (--exclude) ne sont pas propagées aux machines distantes.
 EOF2
 }
 
@@ -379,6 +411,47 @@ parse_args() {
       --no-spinner)
         NO_SPINNER=1
         ;;
+      --remote)
+        RUN_MODE="remote"
+        ;;
+      --remote-hosts)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --remote-hosts"
+        IFS=',' read -r -a _rh <<< "$1"
+        local _h
+        for _h in "${_rh[@]}"; do
+          _h="${_h#"${_h%%[! ]*}"}"   # ltrim espaces
+          _h="${_h%"${_h##*[! ]}"}"   # rtrim espaces
+          [[ -n "$_h" ]] && REMOTE_HOSTS+=("$_h")
+        done
+        unset _rh _h
+        ;;
+      --remote-hosts-file)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --remote-hosts-file"
+        REMOTE_HOSTS_FILE="$1"
+        ;;
+      --remote-path)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --remote-path"
+        REMOTE_PATH="$1"
+        ;;
+      --remote-report-dir)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --remote-report-dir"
+        REMOTE_REPORT_DIR="$1"
+        ;;
+      --remote-timeout)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --remote-timeout"
+        is_non_negative_int "$1" || die "--remote-timeout doit être un entier >= 0"
+        REMOTE_TIMEOUT="$1"
+        ;;
+      --remote-ssh-opt)
+        shift
+        [[ $# -gt 0 ]] || die "argument manquant pour --remote-ssh-opt"
+        REMOTE_SSH_OPTS+=("$1")
+        ;;
       -h|--help)
         usage
         exit 0
@@ -424,6 +497,14 @@ main() {
   if [[ "$SELF_CHECK_ONLY" -eq 1 ]]; then
     # Mode preflight: ne touche ni au scan ni à la navigation interactive.
     self_check_report
+    return $?
+  fi
+
+  if [[ "$RUN_MODE" == "remote" ]]; then
+    # Mode remote : orchestration SSH pure, pas de scan local.
+    # On n'appelle ni check_runtime_requirements ni prepare_current_dir.
+    init_colors
+    remote_run_all
     return $?
   fi
 

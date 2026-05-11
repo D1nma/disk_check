@@ -20,7 +20,7 @@ awk '
   { print }
 ' "$SCRIPT_DIR/src/main.sh" >> "$TMP"
 
-for module in utils scan display tui; do
+for module in utils scan display tui remote; do
   printf '\n' >> "$TMP"
   cat "$SCRIPT_DIR/src/${module}.sh" >> "$TMP"
 done
