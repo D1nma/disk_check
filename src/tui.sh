@@ -548,6 +548,10 @@ draw_header() {
 
   # Ligne 1 : titre + chemin + mode
   local line1_plain="DISK EXPLORER  ${CURRENT_DIR}  $(analysis_label) · $SORT_MODE"
+  if [[ "${_TUI_SCAN_PID:-0}" -gt 0 ]]; then
+    local frame="${_TUI_SPINNER_FRAMES[$_TUI_SPINNER_IDX]}"
+    line1_plain="${line1_plain}  [${frame} Analyse en cours...]"
+  fi
   printf '%s\r\n' "$(_tui_pad "$line1_plain" "$COLUMNS")"
 
   # Ligne 2 : barre de progression
@@ -982,10 +986,9 @@ _TUI_SPINNER_FRAMES=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"
 _TUI_SPINNER_IDX=0
 
 _tui_draw_loading_indicator() {
-  local frame="${_TUI_SPINNER_FRAMES[$_TUI_SPINNER_IDX]}"
-  tput cup 3 0 2>/dev/null || true
-  printf '  %b%s%b  Analyse en cours…' "$CYAN" "$frame" "$NC"
   _TUI_SPINNER_IDX=$(( (_TUI_SPINNER_IDX + 1) % ${#_TUI_SPINNER_FRAMES[@]} ))
+  tput cup 0 0 2>/dev/null || true
+  draw_header
 }
 
 # Recharge SUBDIR_PATHS/SUBDIR_DATA. En mode TUI, lance un scan ASYNC.
