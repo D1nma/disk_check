@@ -29,7 +29,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="7031409"
+VERSION="70f68c7"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -589,7 +589,7 @@ scan_subdirs_to_file() {
   local pid=$!
   wait_for_job "$pid" || job_rc=$?
   update_scan_warning "$err_file" "Analyse partielle possible" "$job_rc"
-  return 0
+  return "$job_rc"
 }
 
 scan_top_files_to_file() {
@@ -631,7 +631,7 @@ scan_top_files_to_file() {
   local pid=$!
   wait_for_job "$pid" || job_rc=$?
   update_scan_warning "$err_file" "Analyse partielle possible" "$job_rc"
-  return 0
+  return "$job_rc"
 }
 
 update_scan_warning() {
@@ -1412,8 +1412,8 @@ _tui_scan_to_file() {
   err_files=$(make_temp_file)  || return 1
 
   if [[ "$DEBUG_TUI" -eq 1 ]]; then
-    printf "[DEBUG] Starting TUI scan at %s\n" "$(date)" > /tmp/disk-explorer.debug
-    printf "[DEBUG] CURRENT_DIR: %s\n" "$CURRENT_DIR" >> /tmp/disk-explorer.debug
+    printf "[DEBUG] Starting _tui_scan_to_file at %s\n" "$(date)" >> ~/disk-explorer.debug
+    printf "[DEBUG] out_file: %s\n" "$out_file" >> ~/disk-explorer.debug
   fi
 
   scan_subdirs_to_file "$tmp_dirs" "$err_dirs"
@@ -1425,12 +1425,12 @@ _tui_scan_to_file() {
   [[ -n "$SCAN_WARNING" && -z "$warn" ]] && warn="$SCAN_WARNING"
 
   if [[ "$DEBUG_TUI" -eq 1 ]]; then
-    printf "[DEBUG] scan_subdirs_to_file rc: %d\n" "$sub_rc" >> /tmp/disk-explorer.debug
-    printf "[DEBUG] scan_subdirs_to_file output size: %d\n" "$(wc -c < "$tmp_dirs")" >> /tmp/disk-explorer.debug
-    printf "[DEBUG] scan_subdirs_to_file errors: %s\n" "$(cat "$err_dirs")" >> /tmp/disk-explorer.debug
-    printf "[DEBUG] _tui_scan_shallow_files rc: %d\n" "$file_rc" >> /tmp/disk-explorer.debug
-    printf "[DEBUG] _tui_scan_shallow_files output size: %d\n" "$(wc -c < "$tmp_files")" >> /tmp/disk-explorer.debug
-    printf "[DEBUG] _tui_scan_shallow_files errors: %s\n" "$(cat "$err_files")" >> /tmp/disk-explorer.debug
+    printf "[DEBUG] scan_subdirs_to_file rc: %d\n" "$sub_rc" >> ~/disk-explorer.debug
+    printf "[DEBUG] scan_subdirs_to_file stdout size: %d\n" "$(wc -c < "$tmp_dirs")" >> ~/disk-explorer.debug
+    printf "[DEBUG] scan_subdirs_to_file stderr size: %d\n" "$(wc -c < "$err_dirs")" >> ~/disk-explorer.debug
+    printf "[DEBUG] _tui_scan_shallow_files rc: %d\n" "$file_rc" >> ~/disk-explorer.debug
+    printf "[DEBUG] _tui_scan_shallow_files stdout size: %d\n" "$(wc -c < "$tmp_files")" >> ~/disk-explorer.debug
+    printf "[DEBUG] _tui_scan_shallow_files stderr size: %d\n" "$(wc -c < "$err_files")" >> ~/disk-explorer.debug
   fi
 
   {
@@ -1447,7 +1447,7 @@ _tui_scan_to_file() {
   } | LC_ALL=C "$SORT_CMD" -zrn | "$HEAD_CMD" -z -n "$TOP_COUNT" > "$out_file"
 
   if [[ "$DEBUG_TUI" -eq 1 ]]; then
-    printf "[DEBUG] final merged size: %d\n" "$(wc -c < "$out_file")" >> /tmp/disk-explorer.debug
+    printf "[DEBUG] final merged size: %d\n" "$(wc -c < "$out_file")" >> ~/disk-explorer.debug
   fi
 
   # On sauve le warning dans un fichier si précisé, sinon variable globale
@@ -2939,6 +2939,15 @@ main() {
   fi
 
   check_runtime_requirements
+
+  export AWK_CMD FIND_CMD SORT_CMD HEAD_CMD DU_CMD NUMFMT_CMD PLATFORM VERSION DEBUG_TUI
+
+  if [[ "$DEBUG_TUI" -eq 1 ]]; then
+    printf "[DEBUG] main() starting at %s\n" "$(date)" > ~/disk-explorer.debug
+    printf "[DEBUG] VERSION: %s\n" "$VERSION" >> ~/disk-explorer.debug
+    printf "[DEBUG] PWD: %s\n" "$(pwd)" >> ~/disk-explorer.debug
+    printf "[DEBUG] AWK_CMD: %s\n" "$AWK_CMD" >> ~/disk-explorer.debug
+  fi
 
   prepare_current_dir
   prepare_exclusions

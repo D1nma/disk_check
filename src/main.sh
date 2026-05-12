@@ -573,6 +573,15 @@ main() {
 
   check_runtime_requirements
 
+  export AWK_CMD FIND_CMD SORT_CMD HEAD_CMD DU_CMD NUMFMT_CMD PLATFORM VERSION DEBUG_TUI
+
+  if [[ "$DEBUG_TUI" -eq 1 ]]; then
+    printf "[DEBUG] main() starting at %s\n" "$(date)" > ~/disk-explorer.debug
+    printf "[DEBUG] VERSION: %s\n" "$VERSION" >> ~/disk-explorer.debug
+    printf "[DEBUG] PWD: %s\n" "$(pwd)" >> ~/disk-explorer.debug
+    printf "[DEBUG] AWK_CMD: %s\n" "$AWK_CMD" >> ~/disk-explorer.debug
+  fi
+
   prepare_current_dir
   prepare_exclusions
   init_temp_root

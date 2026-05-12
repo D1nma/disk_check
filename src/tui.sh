@@ -359,8 +359,8 @@ _tui_scan_to_file() {
   err_files=$(make_temp_file)  || return 1
 
   if [[ "$DEBUG_TUI" -eq 1 ]]; then
-    printf "[DEBUG] Starting TUI scan at %s\n" "$(date)" > /tmp/disk-explorer.debug
-    printf "[DEBUG] CURRENT_DIR: %s\n" "$CURRENT_DIR" >> /tmp/disk-explorer.debug
+    printf "[DEBUG] Starting _tui_scan_to_file at %s\n" "$(date)" >> ~/disk-explorer.debug
+    printf "[DEBUG] out_file: %s\n" "$out_file" >> ~/disk-explorer.debug
   fi
 
   scan_subdirs_to_file "$tmp_dirs" "$err_dirs"
@@ -372,12 +372,12 @@ _tui_scan_to_file() {
   [[ -n "$SCAN_WARNING" && -z "$warn" ]] && warn="$SCAN_WARNING"
 
   if [[ "$DEBUG_TUI" -eq 1 ]]; then
-    printf "[DEBUG] scan_subdirs_to_file rc: %d\n" "$sub_rc" >> /tmp/disk-explorer.debug
-    printf "[DEBUG] scan_subdirs_to_file output size: %d\n" "$(wc -c < "$tmp_dirs")" >> /tmp/disk-explorer.debug
-    printf "[DEBUG] scan_subdirs_to_file errors: %s\n" "$(cat "$err_dirs")" >> /tmp/disk-explorer.debug
-    printf "[DEBUG] _tui_scan_shallow_files rc: %d\n" "$file_rc" >> /tmp/disk-explorer.debug
-    printf "[DEBUG] _tui_scan_shallow_files output size: %d\n" "$(wc -c < "$tmp_files")" >> /tmp/disk-explorer.debug
-    printf "[DEBUG] _tui_scan_shallow_files errors: %s\n" "$(cat "$err_files")" >> /tmp/disk-explorer.debug
+    printf "[DEBUG] scan_subdirs_to_file rc: %d\n" "$sub_rc" >> ~/disk-explorer.debug
+    printf "[DEBUG] scan_subdirs_to_file stdout size: %d\n" "$(wc -c < "$tmp_dirs")" >> ~/disk-explorer.debug
+    printf "[DEBUG] scan_subdirs_to_file stderr size: %d\n" "$(wc -c < "$err_dirs")" >> ~/disk-explorer.debug
+    printf "[DEBUG] _tui_scan_shallow_files rc: %d\n" "$file_rc" >> ~/disk-explorer.debug
+    printf "[DEBUG] _tui_scan_shallow_files stdout size: %d\n" "$(wc -c < "$tmp_files")" >> ~/disk-explorer.debug
+    printf "[DEBUG] _tui_scan_shallow_files stderr size: %d\n" "$(wc -c < "$err_files")" >> ~/disk-explorer.debug
   fi
 
   {
@@ -394,7 +394,7 @@ _tui_scan_to_file() {
   } | LC_ALL=C "$SORT_CMD" -zrn | "$HEAD_CMD" -z -n "$TOP_COUNT" > "$out_file"
 
   if [[ "$DEBUG_TUI" -eq 1 ]]; then
-    printf "[DEBUG] final merged size: %d\n" "$(wc -c < "$out_file")" >> /tmp/disk-explorer.debug
+    printf "[DEBUG] final merged size: %d\n" "$(wc -c < "$out_file")" >> ~/disk-explorer.debug
   fi
 
   # On sauve le warning dans un fichier si précisé, sinon variable globale

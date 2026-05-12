@@ -273,7 +273,7 @@ scan_subdirs_to_file() {
   local pid=$!
   wait_for_job "$pid" || job_rc=$?
   update_scan_warning "$err_file" "Analyse partielle possible" "$job_rc"
-  return 0
+  return "$job_rc"
 }
 
 scan_top_files_to_file() {
@@ -315,7 +315,7 @@ scan_top_files_to_file() {
   local pid=$!
   wait_for_job "$pid" || job_rc=$?
   update_scan_warning "$err_file" "Analyse partielle possible" "$job_rc"
-  return 0
+  return "$job_rc"
 }
 
 update_scan_warning() {
