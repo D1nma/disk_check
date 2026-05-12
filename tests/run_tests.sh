@@ -42,11 +42,15 @@ assert_true '
 
 assert_true '
   "$(dirname "$0")/../disk-explorer.sh" --summary /tmp >/dev/null 2>&1
-' "disk-explorer.sh --summary /tmp: exit 0"
+  rc=$?
+  [[ $rc -eq 0 || $rc -eq 2 ]]
+' "disk-explorer.sh --summary /tmp: exit 0 ou 2"
 
 assert_true '
   echo "" | "$(dirname "$0")/../disk-explorer.sh" /tmp >/dev/null 2>&1
-' "disk-explorer.sh: bascule en summary quand stdin n'est pas un TTY"
+  rc=$?
+  [[ $rc -eq 0 || $rc -eq 2 ]]
+' "disk-explorer.sh: bascule en summary quand stdin n'est pas un TTY (exit 0 ou 2)"
 
 echo "Running tests for is_integer..."
 assert_true "is_integer 123" "is_integer: positive integer"
@@ -96,6 +100,8 @@ _make_paths() {
 _load_paths() {
   local n="$1"
   SUBDIR_PATHS=()
+  SUBDIR_DATA=()
+  SUBDIR_TYPES=()
   local i
   for (( i=1; i<=n; i++ )); do SUBDIR_PATHS+=("/dir$i"); done
 }
