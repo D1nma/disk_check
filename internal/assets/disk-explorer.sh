@@ -17,7 +17,7 @@ fi
 
 set -u -o pipefail
 
-VERSION="v0.2.0" # Placeholder, should be updated by build process
+VERSION="fdd8a5c"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
