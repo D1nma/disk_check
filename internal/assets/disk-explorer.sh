@@ -29,7 +29,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="6246775"
+VERSION="cecff61"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -1411,9 +1411,9 @@ _tui_scan_to_file() {
   tmp_files=$(make_temp_file)  || return 1
   err_files=$(make_temp_file)  || return 1
 
-  if [[ "$DEBUG_TUI" -eq 1 ]]; then
-    printf "[DEBUG] Starting _tui_scan_to_file at %s\n" "$(date)" >> ~/disk-explorer.debug
-    printf "[DEBUG] out_file: %s\n" "$out_file" >> ~/disk-explorer.debug
+  if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
+    printf "[DEBUG] Starting _tui_scan_to_file at %s\n" "$(date)" >&2
+    printf "[DEBUG] out_file: %s\n" "$out_file" >&2
   fi
 
   scan_subdirs_to_file "$tmp_dirs" "$err_dirs"
@@ -1424,10 +1424,10 @@ _tui_scan_to_file() {
   local file_rc=$?
   [[ -n "$SCAN_WARNING" && -z "$warn" ]] && warn="$SCAN_WARNING"
 
-  if [[ "$DEBUG_TUI" -eq 1 ]]; then
-    printf "[DEBUG] _tui_scan_shallow_files rc: %d\n" "$file_rc" >> ~/disk-explorer.debug
-    printf "[DEBUG] _tui_scan_shallow_files stdout size: %d\n" "$(wc -c < "$tmp_files")" >> ~/disk-explorer.debug
-    printf "[DEBUG] _tui_scan_shallow_files stderr: %s\n" "$(cat "$err_files")" >> ~/disk-explorer.debug
+  if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
+    printf "[DEBUG] _tui_scan_shallow_files rc: %d\n" "$file_rc" >&2
+    printf "[DEBUG] _tui_scan_shallow_files stdout size: %d\n" "$(wc -c < "$tmp_files")" >&2
+    printf "[DEBUG] _tui_scan_shallow_files stderr: %s\n" "$(cat "$err_files")" >&2
   fi
 
   # Fusion résiliente sans awk -v RS='\0'
@@ -1444,8 +1444,8 @@ _tui_scan_to_file() {
   LC_ALL=C "$SORT_CMD" -zrn "$out_file" | "$HEAD_CMD" -z -n "$TOP_COUNT" > "$tmp_sorted"
   mv -f -- "$tmp_sorted" "$out_file"
 
-  if [[ "$DEBUG_TUI" -eq 1 ]]; then
-    printf "[DEBUG] final merged size: %d\n" "$(wc -c < "$out_file")" >> ~/disk-explorer.debug
+  if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
+    printf "[DEBUG] final merged size: %d\n" "$(wc -c < "$out_file")" >&2
   fi
 
   # On sauve le warning dans un fichier si précisé, sinon variable globale
@@ -2077,15 +2077,17 @@ _tui_reload_subdirs() {
   # On force ENABLE_SPINNER=0 pour éviter que les fonctions de scan
   # n'essaient d'afficher un spinner sur stderr (conflit avec le TUI).
   (
-    ENABLE_SPINNER=0
     if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
-      printf "[DEBUG] BACKGROUND JOB STARTING for %s\n" "$CURRENT_DIR" >> ~/disk-explorer.debug
+      exec 2>> ~/disk-explorer.debug
+      set -x
+      printf "[DEBUG] BACKGROUND JOB STARTING for %s\n" "$CURRENT_DIR" >&2
     fi
+    ENABLE_SPINNER=0
     _tui_scan_to_file "$_TUI_SCAN_RESULT_FILE"
     local res=$?
     touch "$_TUI_SCAN_DONE_FILE"
     if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
-      printf "[DEBUG] BACKGROUND JOB FINISHED with rc %d\n" "$res" >> ~/disk-explorer.debug
+      printf "[DEBUG] BACKGROUND JOB FINISHED with rc %d\n" "$res" >&2
     fi
   ) &
   _TUI_SCAN_PID=$!
@@ -2949,7 +2951,7 @@ main() {
   check_runtime_requirements
 
   export AWK_CMD FIND_CMD SORT_CMD HEAD_CMD DU_CMD NUMFMT_CMD PLATFORM VERSION DEBUG_TUI
-VERSION="v0.2.2-RESILIENT" # Hardcoded for debugging
+VERSION="v0.2.3-DEBUG" # For line-by-line tracing
 ...
   if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
     # Check TTY without redirection to avoid false negatives in log
