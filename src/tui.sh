@@ -1023,7 +1023,10 @@ _tui_reload_subdirs() {
   _tui_draw_loading_indicator
 
   # Lancer le scan en background
+  # On force ENABLE_SPINNER=0 pour éviter que les fonctions de scan
+  # n'essaient d'afficher un spinner sur stderr (conflit avec le TUI).
   (
+    ENABLE_SPINNER=0
     _tui_scan_to_file "$_TUI_SCAN_RESULT_FILE"
     touch "$_TUI_SCAN_DONE_FILE"
   ) &

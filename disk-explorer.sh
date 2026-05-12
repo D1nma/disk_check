@@ -29,7 +29,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="70f68c7"
+VERSION="0da52d8"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -2076,7 +2076,10 @@ _tui_reload_subdirs() {
   _tui_draw_loading_indicator
 
   # Lancer le scan en background
+  # On force ENABLE_SPINNER=0 pour éviter que les fonctions de scan
+  # n'essaient d'afficher un spinner sur stderr (conflit avec le TUI).
   (
+    ENABLE_SPINNER=0
     _tui_scan_to_file "$_TUI_SCAN_RESULT_FILE"
     touch "$_TUI_SCAN_DONE_FILE"
   ) &
@@ -2947,6 +2950,8 @@ main() {
     printf "[DEBUG] VERSION: %s\n" "$VERSION" >> ~/disk-explorer.debug
     printf "[DEBUG] PWD: %s\n" "$(pwd)" >> ~/disk-explorer.debug
     printf "[DEBUG] AWK_CMD: %s\n" "$AWK_CMD" >> ~/disk-explorer.debug
+    printf "[DEBUG] RUN_MODE: %s\n" "$RUN_MODE" >> ~/disk-explorer.debug
+    printf "[DEBUG] TTY 0: %s, TTY 1: %s\n" "$([[ -t 0 ]] && echo Yes || echo No)" "$([[ -t 1 ]] && echo Yes || echo No)" >> ~/disk-explorer.debug
   fi
 
   prepare_current_dir

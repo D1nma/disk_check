@@ -580,6 +580,8 @@ main() {
     printf "[DEBUG] VERSION: %s\n" "$VERSION" >> ~/disk-explorer.debug
     printf "[DEBUG] PWD: %s\n" "$(pwd)" >> ~/disk-explorer.debug
     printf "[DEBUG] AWK_CMD: %s\n" "$AWK_CMD" >> ~/disk-explorer.debug
+    printf "[DEBUG] RUN_MODE: %s\n" "$RUN_MODE" >> ~/disk-explorer.debug
+    printf "[DEBUG] TTY 0: %s, TTY 1: %s\n" "$([[ -t 0 ]] && echo Yes || echo No)" "$([[ -t 1 ]] && echo Yes || echo No)" >> ~/disk-explorer.debug
   fi
 
   prepare_current_dir
