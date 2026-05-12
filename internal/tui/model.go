@@ -54,6 +54,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case NewEntryMsg:
 		m.Entries = append(m.Entries, scanner.Entry(msg))
+		m.sortEntries()
 		return m, listenForEntries(m.ScannerChan)
 
 	case tea.KeyMsg:
@@ -71,6 +72,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.Selected < len(m.Entries)-1 {
 				m.Selected++
 			}
+		case "s":
+			if m.SortBy == SortSize {
+				m.SortReverse = !m.SortReverse
+			} else {
+				m.SortBy = SortSize
+				m.SortReverse = false
+			}
+			m.sortEntries()
+		case "n":
+			if m.SortBy == SortName {
+				m.SortReverse = !m.SortReverse
+			} else {
+				m.SortBy = SortName
+				m.SortReverse = false
+			}
+			m.sortEntries()
+		case "t":
+			if m.SortBy == SortDate {
+				m.SortReverse = !m.SortReverse
+			} else {
+				m.SortBy = SortDate
+				m.SortReverse = false
+			}
+			m.sortEntries()
 		case "enter":
 			if len(m.Entries) > 0 && m.Entries[m.Selected].IsDir {
 				// Save current path to history before navigating deeper
@@ -124,9 +149,42 @@ func (m Model) navigateTo(newPath string) (tea.Model, tea.Cmd) {
 	return m, listenForEntries(m.ScannerChan)
 }
 
+func formatSize(size int64) string {
+	units := []string{"B", "KiB", "MiB", "GiB", "TiB"}
+	var i int
+	fsize := float64(size)
+	for fsize >= 1024 && i < len(units)-1 {
+		fsize /= 1024
+		i++
+	}
+	return fmt.Sprintf("%.1f %s", fsize, units[i])
+}
+
+func renderBar(width int, percentage float64) string {
+	filled := int(float64(width) * percentage)
+	if filled > width {
+		filled = width
+	}
+	bar := ""
+	for i := 0; i < filled; i++ {
+		bar += "#"
+	}
+	for i := filled; i < width; i++ {
+		bar += " "
+	}
+	return "[" + bar + "]"
+}
+
 func (m Model) View() string {
 	if len(m.Entries) == 0 {
 		return "Scanning..."
+	}
+
+	var maxVal int64
+	for _, e := range m.Entries {
+		if e.Size > maxVal {
+			maxVal = e.Size
+		}
 	}
 
 	var s string
@@ -137,7 +195,17 @@ func (m Model) View() string {
 		if m.Selected == i {
 			cursor = ">"
 		}
-		s += fmt.Sprintf("%s %s\n", cursor, entry.Path)
+
+		perc := 0.0
+		if maxVal > 0 {
+			perc = float64(entry.Size) / float64(maxVal)
+		}
+
+		bar := renderBar(10, perc)
+		sizeStr := formatSize(entry.Size)
+
+		// Adjust padding for sizeStr to keep columns aligned
+		s += fmt.Sprintf("%s %10s %s %s\n", cursor, sizeStr, bar, entry.Path)
 	}
 
 	return s
