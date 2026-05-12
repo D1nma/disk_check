@@ -3,7 +3,7 @@
 A fast, portable disk usage explorer. Written in Go with a seamless Bash bootstrap and fallback.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh)
+curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh | bash
 ```
 
 ```
@@ -37,7 +37,7 @@ DISK EXPLORER  /home/user  MÊME PARTITION · size
 ### Universal Command
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh)
+curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh | bash
 ```
 
 The script will automatically detect your platform (Linux/macOS), architecture (amd64/arm64), and download the appropriate Go binary.
