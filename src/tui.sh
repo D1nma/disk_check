@@ -1021,20 +1021,29 @@ _tui_reload_subdirs() {
   _tui_draw_loading_indicator
 
   # Lancer le scan en background
-  # On force ENABLE_SPINNER=0 pour éviter que les fonctions de scan
-  # n'essaient d'afficher un spinner sur stderr (conflit avec le TUI).
+  # On exporte tout ce dont le subshell a besoin
+  export CURRENT_DIR SORT_MODE FILE_SIZE_MODE TOP_COUNT TOP_FILES_COUNT MAX_DEPTH ANALYSIS_MODE
+  export DU_CMD FIND_CMD SORT_CMD HEAD_CMD AWK_CMD DEBUG_TUI TEMP_ROOT
+
   (
+    # Désactiver set -u dans le subshell pour éviter les plantages sur variables vides
+    set +u
     if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
       exec 2>> ~/disk-explorer.debug
       set -x
-      printf "[DEBUG] BACKGROUND JOB STARTING for %s\n" "$CURRENT_DIR" >&2
+      printf "[DEBUG] BACKGROUND JOB STARTING at %s for %s\n" "$(date)" "$CURRENT_DIR" >&2
+      printf "[DEBUG] ENV: DU=%s FIND=%s SORT=%s AWK=%s\n" "$DU_CMD" "$FIND_CMD" "$SORT_CMD" "$AWK_CMD" >&2
     fi
+    
     ENABLE_SPINNER=0
     _tui_scan_to_file "$_TUI_SCAN_RESULT_FILE"
     local res=$?
+    
     touch "$_TUI_SCAN_DONE_FILE"
+    
     if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
-      printf "[DEBUG] BACKGROUND JOB FINISHED with rc %d\n" "$res" >&2
+      printf "[DEBUG] BACKGROUND JOB FINISHED at %s with rc %d\n" "$(date)" "$res" >&2
+      printf "[DEBUG] RESULT FILE SIZE: %d\n" "$(wc -c < "$_TUI_SCAN_RESULT_FILE")" >&2
     fi
   ) &
   _TUI_SCAN_PID=$!

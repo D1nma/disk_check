@@ -574,7 +574,7 @@ main() {
   check_runtime_requirements
 
   export AWK_CMD FIND_CMD SORT_CMD HEAD_CMD DU_CMD NUMFMT_CMD PLATFORM VERSION DEBUG_TUI
-VERSION="v0.2.3-DEBUG" # For line-by-line tracing
+VERSION="v0.2.5-ULTRA-RESILIENT" # Final attempt at fixing the scan
 ...
   if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
     # Check TTY without redirection to avoid false negatives in log
