@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"github.com/D1nma/disk_check/internal/scanner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -88,6 +89,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Height = msg.Height
 	}
 	return m, nil
+}
+
+func (m *Model) sortEntries() {
+	sort.Slice(m.Entries, func(i, j int) bool {
+		var res bool
+		switch m.SortBy {
+		case SortSize:
+			res = m.Entries[i].Size > m.Entries[j].Size
+		case SortName:
+			res = m.Entries[i].Path < m.Entries[j].Path
+		case SortDate:
+			res = m.Entries[i].ModTime.After(m.Entries[j].ModTime)
+		}
+		if m.SortReverse {
+			return !res
+		}
+		return res
+	})
 }
 
 func (m Model) navigateTo(newPath string) (tea.Model, tea.Cmd) {
