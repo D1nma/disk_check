@@ -573,7 +573,7 @@ main() {
 
   check_runtime_requirements
 
-VERSION="v1.0.0-GOLD" # Stable release
+VERSION="v1.0.1-RESILIENT" # Fixed awk dependency for subdirs
 ...
   check_runtime_requirements
 

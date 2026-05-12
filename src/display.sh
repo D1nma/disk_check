@@ -235,17 +235,19 @@ print_summary() {
     while IFS= read -r -d '' line; do
       ts="${line%%$'\t'*}"
       full_path="${line#*$'\t'}"
-      [[ -z "$full_path" || "$full_path" == "$line" ]] && continue
+      [[ -z "$full_path" || "$full_path" == "$line" || "$full_path" == "$CURRENT_DIR" ]] && continue
       printf '  %s  %s\n' "$(date_from_epoch "$ts")" "$(sanitize_for_display "$full_path")"
       found=1
+      (( found >= TOP_COUNT )) && break
     done < "$tmp_sub"
   else
     while IFS= read -r -d '' line; do
       raw_size="${line%%$'\t'*}"
       full_path="${line#*$'\t'}"
-      [[ -z "$full_path" || "$full_path" == "$line" ]] && continue
+      [[ -z "$full_path" || "$full_path" == "$line" || "$full_path" == "$CURRENT_DIR" ]] && continue
       printf '  %12s  %s\n' "$(human_size "$raw_size")" "$(sanitize_for_display "$full_path")"
       found=1
+      (( found >= TOP_COUNT )) && break
     done < "$tmp_sub"
   fi
   (( found == 0 )) && echo "  (aucun)"

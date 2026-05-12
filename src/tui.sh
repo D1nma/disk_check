@@ -380,6 +380,7 @@ _tui_scan_to_file() {
   # Fusion résiliente sans awk -v RS='\0'
   : > "$out_file"
   while IFS=$'\t' read -r -d '' val path; do
+    [[ "$path" == "$CURRENT_DIR" ]] && continue
     printf '%s\td:%s\0' "$val" "$path" >> "$out_file"
   done < "$tmp_dirs"
   while IFS=$'\t' read -r -d '' val path; do

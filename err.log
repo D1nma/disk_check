@@ -1,0 +1,10 @@
+du: cannot read directory '/etc/redis': Permission denied
+du: cannot read directory '/etc/ssl/private': Permission denied
+du: cannot read directory '/etc/letsencrypt/accounts': Permission denied
+du: cannot read directory '/etc/letsencrypt/live': Permission denied
+du: cannot read directory '/etc/letsencrypt/archive': Permission denied
+du: cannot read directory '/etc/wireguard': Permission denied
+du: cannot read directory '/etc/.git': Permission denied
+du: cannot read directory '/etc/credstore.encrypted': Permission denied
+du: cannot read directory '/etc/polkit-1/rules.d': Permission denied
+du: cannot read directory '/etc/credstore': Permission denied

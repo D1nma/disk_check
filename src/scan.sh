@@ -248,23 +248,15 @@ scan_subdirs_to_file() {
 
     "${find_cmd[@]}" -mindepth 1 -type d -printf '%T@\t%p\0' 2>"$err_file" |
       LC_ALL=C "$SORT_CMD" -zrn |
-      "$HEAD_CMD" -z -n "$TOP_COUNT" >"$out_file"
+      "$HEAD_CMD" -z -n "$((TOP_COUNT + 1))" >"$out_file"
     job_rc=$?
   else
     local -a du_cmd
     build_du_cmd du_cmd
 
     "${du_cmd[@]}" 2>"$err_file" |
-      "$AWK_CMD" -v RS='\0' -v ORS='\0' -v root="$CURRENT_DIR" '
-        {
-          tab = index($0, "\t")
-          if (tab == 0) next
-          path = substr($0, tab + 1)
-          if (path != root) print $0
-        }
-      ' |
       LC_ALL=C "$SORT_CMD" -zrn |
-      "$HEAD_CMD" -z -n "$TOP_COUNT" >"$out_file"
+      "$HEAD_CMD" -z -n "$((TOP_COUNT + 1))" >"$out_file"
     job_rc=$?
   fi
 

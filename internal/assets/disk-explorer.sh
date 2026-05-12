@@ -29,7 +29,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="60db529"
+VERSION="b26d852"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -564,23 +564,15 @@ scan_subdirs_to_file() {
 
     "${find_cmd[@]}" -mindepth 1 -type d -printf '%T@\t%p\0' 2>"$err_file" |
       LC_ALL=C "$SORT_CMD" -zrn |
-      "$HEAD_CMD" -z -n "$TOP_COUNT" >"$out_file"
+      "$HEAD_CMD" -z -n "$((TOP_COUNT + 1))" >"$out_file"
     job_rc=$?
   else
     local -a du_cmd
     build_du_cmd du_cmd
 
     "${du_cmd[@]}" 2>"$err_file" |
-      "$AWK_CMD" -v RS='\0' -v ORS='\0' -v root="$CURRENT_DIR" '
-        {
-          tab = index($0, "\t")
-          if (tab == 0) next
-          path = substr($0, tab + 1)
-          if (path != root) print $0
-        }
-      ' |
       LC_ALL=C "$SORT_CMD" -zrn |
-      "$HEAD_CMD" -z -n "$TOP_COUNT" >"$out_file"
+      "$HEAD_CMD" -z -n "$((TOP_COUNT + 1))" >"$out_file"
     job_rc=$?
   fi
 
@@ -903,17 +895,19 @@ print_summary() {
     while IFS= read -r -d '' line; do
       ts="${line%%$'\t'*}"
       full_path="${line#*$'\t'}"
-      [[ -z "$full_path" || "$full_path" == "$line" ]] && continue
+      [[ -z "$full_path" || "$full_path" == "$line" || "$full_path" == "$CURRENT_DIR" ]] && continue
       printf '  %s  %s\n' "$(date_from_epoch "$ts")" "$(sanitize_for_display "$full_path")"
       found=1
+      (( found >= TOP_COUNT )) && break
     done < "$tmp_sub"
   else
     while IFS= read -r -d '' line; do
       raw_size="${line%%$'\t'*}"
       full_path="${line#*$'\t'}"
-      [[ -z "$full_path" || "$full_path" == "$line" ]] && continue
+      [[ -z "$full_path" || "$full_path" == "$line" || "$full_path" == "$CURRENT_DIR" ]] && continue
       printf '  %12s  %s\n' "$(human_size "$raw_size")" "$(sanitize_for_display "$full_path")"
       found=1
+      (( found >= TOP_COUNT )) && break
     done < "$tmp_sub"
   fi
   (( found == 0 )) && echo "  (aucun)"
@@ -1423,6 +1417,7 @@ _tui_scan_to_file() {
   # Fusion résiliente sans awk -v RS='\0'
   : > "$out_file"
   while IFS=$'\t' read -r -d '' val path; do
+    [[ "$path" == "$CURRENT_DIR" ]] && continue
     printf '%s\td:%s\0' "$val" "$path" >> "$out_file"
   done < "$tmp_dirs"
   while IFS=$'\t' read -r -d '' val path; do
@@ -2956,7 +2951,7 @@ main() {
 
   check_runtime_requirements
 
-VERSION="v1.0.0-GOLD" # Stable release
+VERSION="v1.0.1-RESILIENT" # Fixed awk dependency for subdirs
 ...
   check_runtime_requirements
 
