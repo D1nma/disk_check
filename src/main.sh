@@ -17,6 +17,10 @@ fi
 
 set -u -o pipefail
 
+VERSION="v0.2.0" # Placeholder, should be updated by build process
+REPO_URL="https://github.com/D1nma/disk_check"
+CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
+
 # ================== CONFIGURATION PAR DÉFAUT ==================
 readonly DEFAULT_REPORT_DIR="${HOME}/disk-reports"
 readonly DEFAULT_TOP_COUNT=15
@@ -122,6 +126,21 @@ init_colors() {
     DIM='\033[2m'
     NC='\033[0m'
   fi
+}
+
+download_binary() {
+    local os=$1 arch=$2 target=$3
+    local url="${REPO_URL}/releases/download/${VERSION}/disk-explorer-${os}-${arch}"
+    
+    mkdir -p "$(dirname "$target")"
+    if command -v curl >/dev/null 2>&1; then
+        curl -SLf "$url" -o "$target"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q "$url" -O "$target"
+    else
+        return 1
+    fi
+    chmod +x "$target"
 }
 
 init_runtime_flags() {
