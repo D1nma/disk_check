@@ -574,17 +574,18 @@ main() {
   check_runtime_requirements
 
   export AWK_CMD FIND_CMD SORT_CMD HEAD_CMD DU_CMD NUMFMT_CMD PLATFORM VERSION DEBUG_TUI
-
-  if [[ "$DEBUG_TUI" -eq 1 ]]; then
+VERSION="v0.2.2-RESILIENT" # Hardcoded for debugging
+...
+  if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
+    # Check TTY without redirection to avoid false negatives in log
+    local t0 t1
+    [[ -t 0 ]] && t0=Yes || t0=No
+    [[ -t 1 ]] && t1=Yes || t1=No
     printf "[DEBUG] main() starting at %s\n" "$(date)" > ~/disk-explorer.debug
     printf "[DEBUG] VERSION: %s\n" "$VERSION" >> ~/disk-explorer.debug
     printf "[DEBUG] PWD: %s\n" "$(pwd)" >> ~/disk-explorer.debug
     printf "[DEBUG] AWK_CMD: %s\n" "$AWK_CMD" >> ~/disk-explorer.debug
     printf "[DEBUG] RUN_MODE: %s\n" "$RUN_MODE" >> ~/disk-explorer.debug
-    # Check TTY without redirection to avoid false negatives in log
-    local t0 t1
-    [[ -t 0 ]] && t0=Yes || t0=No
-    [[ -t 1 ]] && t1=Yes || t1=No
     printf "[DEBUG] TTY 0: %s, TTY 1: %s\n" "$t0" "$t1" >> ~/disk-explorer.debug
   fi
 

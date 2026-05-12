@@ -372,26 +372,24 @@ _tui_scan_to_file() {
   [[ -n "$SCAN_WARNING" && -z "$warn" ]] && warn="$SCAN_WARNING"
 
   if [[ "$DEBUG_TUI" -eq 1 ]]; then
-    printf "[DEBUG] scan_subdirs_to_file rc: %d\n" "$sub_rc" >> ~/disk-explorer.debug
-    printf "[DEBUG] scan_subdirs_to_file stdout size: %d\n" "$(wc -c < "$tmp_dirs")" >> ~/disk-explorer.debug
-    printf "[DEBUG] scan_subdirs_to_file stderr size: %d\n" "$(wc -c < "$err_dirs")" >> ~/disk-explorer.debug
     printf "[DEBUG] _tui_scan_shallow_files rc: %d\n" "$file_rc" >> ~/disk-explorer.debug
     printf "[DEBUG] _tui_scan_shallow_files stdout size: %d\n" "$(wc -c < "$tmp_files")" >> ~/disk-explorer.debug
-    printf "[DEBUG] _tui_scan_shallow_files stderr size: %d\n" "$(wc -c < "$err_files")" >> ~/disk-explorer.debug
+    printf "[DEBUG] _tui_scan_shallow_files stderr: %s\n" "$(cat "$err_files")" >> ~/disk-explorer.debug
   fi
 
-  {
-    "$AWK_CMD" -v RS='\0' -v ORS='\0' '{
-      tab = index($0, "\t")
-      if (tab == 0 || length($0) <= 1) next
-      print substr($0,1,tab-1) "\td:" substr($0,tab+1)
-    }' "$tmp_dirs"
-    "$AWK_CMD" -v RS='\0' -v ORS='\0' '{
-      tab = index($0, "\t")
-      if (tab == 0 || length($0) <= 1) next
-      print substr($0,1,tab-1) "\tf:" substr($0,tab+1)
-    }' "$tmp_files"
-  } | LC_ALL=C "$SORT_CMD" -zrn | "$HEAD_CMD" -z -n "$TOP_COUNT" > "$out_file"
+  # Fusion résiliente sans awk -v RS='\0'
+  : > "$out_file"
+  while IFS=$'\t' read -r -d '' val path; do
+    printf '%s\td:%s\0' "$val" "$path" >> "$out_file"
+  done < "$tmp_dirs"
+  while IFS=$'\t' read -r -d '' val path; do
+    printf '%s\tf:%s\0' "$val" "$path" >> "$out_file"
+  done < "$tmp_files"
+
+  # Tri final
+  local tmp_sorted; tmp_sorted=$(make_temp_file)
+  LC_ALL=C "$SORT_CMD" -zrn "$out_file" | "$HEAD_CMD" -z -n "$TOP_COUNT" > "$tmp_sorted"
+  mv -f -- "$tmp_sorted" "$out_file"
 
   if [[ "$DEBUG_TUI" -eq 1 ]]; then
     printf "[DEBUG] final merged size: %d\n" "$(wc -c < "$out_file")" >> ~/disk-explorer.debug
