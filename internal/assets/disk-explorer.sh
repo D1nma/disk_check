@@ -17,7 +17,12 @@ fi
 
 set -u -o pipefail
 
-VERSION="24eb4ca"
+# Reconnect stdin to TTY if redirected (supports curl | bash)
+if [[ ! -t 0 && -t 1 ]] && exec < /dev/tty 2>/dev/null; then
+  : # Stdin reconnected successfully
+fi
+
+VERSION="cca4ec7"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -2520,22 +2525,7 @@ init_runtime_flags() {
     ENABLE_SPINNER=0
   fi
 
-  if [[ "$RUN_MODE" == "interactive" && ! -t 0 ]]; then
-    # Tente de reconnecter stdin au terminal (curl | bash support)
-    if [[ -c /dev/tty ]]; then
-      exec < /dev/tty
-    elif [[ "$OSTYPE" == darwin* ]]; then
-      # Sur macOS, /dev/tty est parfois absent mais stdin est qd même redirigé
-      # On reste prudent.
-      RUN_MODE="summary"
-      ENABLE_SPINNER=0
-    else
-      RUN_MODE="summary"
-      ENABLE_SPINNER=0
-    fi
-  fi
-
-  if [[ "$RUN_MODE" == "interactive" && ! -t 1 ]]; then
+  if [[ "$RUN_MODE" == "interactive" && ( ! -t 0 || ! -t 1 ) ]]; then
     RUN_MODE="summary"
     ENABLE_SPINNER=0
   fi
