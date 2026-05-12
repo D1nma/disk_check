@@ -2,7 +2,11 @@ package remote
 
 import (
 	"io"
+	"net"
+	"os"
+	"strings"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"github.com/D1nma/disk_check/internal/assets"
 )
 
@@ -19,10 +23,17 @@ func (r *remoteReader) Close() error {
 }
 
 func RunRemote(host string, user string) (io.ReadCloser, error) {
-	// 1. Setup Auth (simplified for plan, real impl will look for keys)
+	// 1. Setup Auth
+	var auths []ssh.AuthMethod
+	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
+		if agentChan, err := net.Dial("unix", sock); err == nil {
+			auths = append(auths, ssh.PublicKeysCallback(agent.NewClient(agentChan).Signers))
+		}
+	}
+
 	config := &ssh.ClientConfig{
 		User: user,
-		Auth: []ssh.AuthMethod{}, // TODO: Add key/agent auth
+		Auth: auths,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 
@@ -38,6 +49,7 @@ func RunRemote(host string, user string) (io.ReadCloser, error) {
 	}
 
 	// 2. Run embedded script
+	session.Stdin = strings.NewReader(assets.BashScript)
 	stdout, err := session.StdoutPipe()
 	if err != nil {
 		session.Close()
@@ -45,8 +57,8 @@ func RunRemote(host string, user string) (io.ReadCloser, error) {
 		return nil, err
 	}
 
-	// Pass the script content as a string
-	err = session.Start(string(assets.BashScript))
+	// Execute bash -s which reads from stdin
+	err = session.Start("bash -s")
 	if err != nil {
 		session.Close()
 		client.Close()
