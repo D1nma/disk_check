@@ -29,7 +29,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="v0.2.0" # Placeholder, should be updated by build process
+VERSION="v0.2.1" # Placeholder, should be updated by build process
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -581,7 +581,11 @@ main() {
     printf "[DEBUG] PWD: %s\n" "$(pwd)" >> ~/disk-explorer.debug
     printf "[DEBUG] AWK_CMD: %s\n" "$AWK_CMD" >> ~/disk-explorer.debug
     printf "[DEBUG] RUN_MODE: %s\n" "$RUN_MODE" >> ~/disk-explorer.debug
-    printf "[DEBUG] TTY 0: %s, TTY 1: %s\n" "$([[ -t 0 ]] && echo Yes || echo No)" "$([[ -t 1 ]] && echo Yes || echo No)" >> ~/disk-explorer.debug
+    # Check TTY without redirection to avoid false negatives in log
+    local t0 t1
+    [[ -t 0 ]] && t0=Yes || t0=No
+    [[ -t 1 ]] && t1=Yes || t1=No
+    printf "[DEBUG] TTY 0: %s, TTY 1: %s\n" "$t0" "$t1" >> ~/disk-explorer.debug
   fi
 
   prepare_current_dir

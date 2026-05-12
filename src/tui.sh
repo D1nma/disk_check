@@ -1027,8 +1027,15 @@ _tui_reload_subdirs() {
   # n'essaient d'afficher un spinner sur stderr (conflit avec le TUI).
   (
     ENABLE_SPINNER=0
+    if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
+      printf "[DEBUG] BACKGROUND JOB STARTING for %s\n" "$CURRENT_DIR" >> ~/disk-explorer.debug
+    fi
     _tui_scan_to_file "$_TUI_SCAN_RESULT_FILE"
+    local res=$?
     touch "$_TUI_SCAN_DONE_FILE"
+    if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
+      printf "[DEBUG] BACKGROUND JOB FINISHED with rc %d\n" "$res" >> ~/disk-explorer.debug
+    fi
   ) &
   _TUI_SCAN_PID=$!
 }
