@@ -138,6 +138,26 @@ detect_platform() {
   [[ "$OSTYPE" == darwin* ]] && PLATFORM="macos" || PLATFORM="linux"
 }
 
+get_os() {
+    local os
+    os=$(uname -s | tr '[:upper:]' '[:lower:]')
+    case "$os" in
+        linux*) echo "linux" ;;
+        darwin*) echo "darwin" ;;
+        *) echo "$os" ;;
+    esac
+}
+
+get_arch() {
+    local arch
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64) echo "amd64" ;;
+        arm64|aarch64) echo "arm64" ;;
+        *) echo "$arch" ;;
+    esac
+}
+
 file_size_label() {
   [[ "$FILE_SIZE_MODE" == "real" ]] && echo "Réel (blocs alloués)" || echo "Apparent (taille logique)"
 }

@@ -15,10 +15,12 @@ trap 'rm -f "$TMP"' EXIT
 # Le header est tout ce qui précède la première ligne `nom() {`.
 # Le footer est le reste.
 
+GIT_VERSION=$(git describe --tags --always)
+
 awk '
   /^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*\(\)/ { exit }
   { print }
-' "$SCRIPT_DIR/src/main.sh" >> "$TMP"
+' "$SCRIPT_DIR/src/main.sh" | sed "s/^VERSION=.*/VERSION=\"$GIT_VERSION\"/" >> "$TMP"
 
 for module in utils scan display tui remote; do
   printf '\n' >> "$TMP"
@@ -33,4 +35,5 @@ awk '
 chmod 755 "$TMP"
 bash -n "$TMP" || { echo "ERREUR: syntaxe invalide dans le fichier généré" >&2; exit 1; }
 mv "$TMP" "$OUT"
-echo "Build OK → $OUT"
+cp "$OUT" "$SCRIPT_DIR/internal/assets/disk-explorer.sh"
+echo "Build OK → $OUT (and synchronized to internal/assets)"

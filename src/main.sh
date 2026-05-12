@@ -17,6 +17,10 @@ fi
 
 set -u -o pipefail
 
+VERSION="v0.2.0" # Placeholder, should be updated by build process
+REPO_URL="https://github.com/D1nma/disk_check"
+CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
+
 # ================== CONFIGURATION PAR DÉFAUT ==================
 readonly DEFAULT_REPORT_DIR="${HOME}/disk-reports"
 readonly DEFAULT_TOP_COUNT=15
@@ -109,6 +113,40 @@ RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' DIM='' NC=''
 # ================== TRAPS ==================
 trap cleanup EXIT
 trap on_interrupt INT TERM
+
+try_go_binary() {
+    # Bypass if --bash flag is present
+    for arg in "$@"; do [[ "$arg" == "--bash" ]] && return; done
+    
+    local os arch binary
+    os=$(get_os)
+    arch=$(get_arch)
+    binary="${CACHE_DIR}/disk-explorer"
+
+    if [[ ! -x "$binary" ]]; then
+        # Try to download
+        download_binary "$os" "$arch" "$binary" >/dev/null 2>&1 || return
+    fi
+
+    if [[ -x "$binary" ]]; then
+        exec "$binary" "$@"
+    fi
+}
+
+download_binary() {
+    local os=$1 arch=$2 target=$3
+    local url="${REPO_URL}/releases/download/${VERSION}/disk-explorer-${os}-${arch}"
+    
+    mkdir -p "$(dirname "$target")"
+    if command -v curl >/dev/null 2>&1; then
+        curl -SLf "$url" -o "$target"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q "$url" -O "$target"
+    else
+        return 1
+    fi
+    chmod +x "$target"
+}
 
 init_colors() {
   if [[ "$NO_COLOR" -eq 0 && -t 1 ]]; then
@@ -284,6 +322,7 @@ Options:
   --no-default-excludes     N'utilise pas les exclusions par défaut
   --no-color                Désactive les couleurs
   --no-spinner              Désactive le spinner
+  --bash                    Force l'utilisation de l'implémentation Bash
   -h, --help                Aide
 
 Mode Remote SSH (--remote) :
@@ -410,6 +449,9 @@ parse_args() {
         ;;
       --no-spinner)
         NO_SPINNER=1
+        ;;
+      --bash)
+        # Ignoré ici, déjà traité par le shim try_go_binary
         ;;
       --remote)
         RUN_MODE="remote"
@@ -558,5 +600,6 @@ main() {
 
 # :-  : BASH_SOURCE[0] is unset/empty when piped to bash (curl … | bash), set -u requires default.
 if [[ "${BASH_SOURCE[0]:-}" == "${0}" || -z "${BASH_SOURCE[0]:-}" ]]; then
+  try_go_binary "$@"
   main "$@"
 fi

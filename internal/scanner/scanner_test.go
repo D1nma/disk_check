@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,15 +29,12 @@ func TestScan(t *testing.T) {
 		t.Fatalf("Failed to create file2: %v", err)
 	}
 
-	results := Scan(tmpDir, 2)
+	ctx := context.Background()
+	results := Scan(ctx, tmpDir, 2)
 
 	var allEntries []Entry
-	for res := range results {
-		if res.Error != nil {
-			t.Errorf("Scan error: %v", res.Error)
-			continue
-		}
-		allEntries = append(allEntries, res.Entries...)
+	for entry := range results {
+		allEntries = append(allEntries, entry)
 	}
 
 	// We expect 3 entries: dir1, file1.txt, and file2.txt
@@ -61,17 +59,37 @@ func TestScan(t *testing.T) {
 	}
 }
 
-func TestScanNonExistent(t *testing.T) {
-	results := Scan("/non/existent/path/for/sure", 2)
-	
-	var errFound bool
-	for res := range results {
-		if res.Error != nil {
-			errFound = true
+func TestScanContextCancellation(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "scanner_cancel_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a larger structure to ensure we have time to cancel
+	for i := 0; i < 10; i++ {
+		dir := filepath.Join(tmpDir, "dir"+filepath.Join(string(rune('a'+i))))
+		os.MkdirAll(dir, 0755)
+		for j := 0; j < 10; j++ {
+			file := filepath.Join(dir, "file"+filepath.Join(string(rune('a'+j))))
+			os.WriteFile(file, []byte("test"), 0644)
 		}
 	}
-	
-	if !errFound {
-		t.Errorf("Expected error for non-existent path, got none")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel immediately or very soon
+	cancel()
+
+	results := Scan(ctx, tmpDir, 2)
+
+	count := 0
+	for range results {
+		count++
+	}
+
+	// Since we cancelled immediately, we expect very few or zero results
+	// The exact number depends on race conditions but it should definitely be less than 110
+	if count >= 110 {
+		t.Errorf("Expected scan to be cancelled, but got %d entries", count)
 	}
 }

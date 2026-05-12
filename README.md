@@ -1,6 +1,6 @@
 # disk-explorer
 
-A single-file Bash TUI for exploring disk usage — no installation required.
+A fast, portable disk usage explorer. Written in Go with a seamless Bash bootstrap and fallback.
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh)
@@ -10,185 +10,97 @@ bash <(curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-e
 DISK EXPLORER  /home/user  MÊME PARTITION · size
 ████████░░░░░░░░░░░ 42%   58 Go / 230 Go
 ────────────────────────────────────────────────────────────────────────────
-   1)    21,3 Go  ██████████  .cargo/
-   2)    18,7 Go  ████████░░  node_modules/
-   3)     6,1 Go  ███░░░░░░░  .local/
-   4)   512,0 Mo  ██░░░░░░░░  archive.tar.gz
-   5)   128,0 Mo  █░░░░░░░░░  Downloads/
+   1)    21.3 GiB  [##########]  .cargo/
+   2)    18.7 GiB  [########  ]  node_modules/
+   3)     6.1 GiB  [###       ]  .local/
+   4)   512.0 MiB  [##        ]  archive.tar.gz
+   5)   128.0 MiB  [#         ]  Downloads/
 ────────────────────────────────────────────────────────────────────────────
-  [↑↓] naviguer  [Entrée] ouvrir  [d] supprimer  [1-5] accès direct  [0] retour
-  [s] tri  [a] taille  [f] fichiers  [r] rapport  [h] aide  [q] quitter
+  [↑↓] navigate  [Enter] open  [s] sort  [n] name  [t] date  [q] quit
 ```
 
 ---
 
 ## Features
 
-- **Full-screen TUI** — arrow key navigation, proportional bars per entry, disk usage bar
-- **Mixed files + directories** in the same sorted list (like ncdu)
-- **Delete** selected item with inline confirmation (`d`)
-- **Summary mode** — non-interactive report for scripts and CI
-- **Report mode** — timestamped text report written to disk
-- **Tree mode** — size tree with `% of parent`
-- **Sort** by size or last modified date
-- **Exclusions** — configurable per-run or persistent via config menu
-- **Remote SSH** — run on multiple machines in parallel, one report per host
-- **No install** — single self-contained script, works via `curl | bash`
+- **Hybrid Architecture** — A pre-compiled Go binary for speed, wrapped in a portable Bash script for a zero-install experience.
+- **Lazy Scanning** — Only scans the directory you are looking at. Fast, efficient, and keeps memory usage to a minimum.
+- **Real-time TUI** — Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea), entries stream live as they are discovered.
+- **Native SSH Support** — Built-in SSH client (`golang.org/x/crypto/ssh`) to scan remote hosts without depending on the system's `ssh` command.
+- **Automatic Distribution** — The Bash wrapper detects your OS/Architecture and automatically downloads the correct Go binary from GitHub Releases.
+- **Reliable Fallback** — If the Go binary can't be run (unsupported platform or offline), it seamlessly falls back to the original full-featured Bash implementation.
 
 ---
 
 ## Quick start
 
-### Interactive TUI
-
-| Shell | Command |
-|---|---|
-| bash / zsh | `bash <(curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh)` |
-| fish | `bash (curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh \| psub)` |
-| any (universal) | `curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh -o /tmp/de.sh && bash /tmp/de.sh` |
-
-### Summary only (all shells, pipe-friendly)
+### Universal Command
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh | bash
+bash <(curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh)
 ```
 
-> **Why two commands?**  
-> `curl URL | bash` feeds the script via stdin, which prevents the TUI from reading keystrokes.  
-> Process substitution (`<(...)` or `psub`) downloads the script to a file descriptor first, leaving stdin connected to the terminal.
+The script will automatically detect your platform (Linux/macOS), architecture (amd64/arm64), and download the appropriate Go binary.
 
-> **Corporate proxies:** if you get `curl: (35) OpenSSL SSL_connect: Connection reset`, your proxy is blocking DuckDNS or custom domains. The `raw.githubusercontent.com` URL above works on virtually all corporate networks.
+### Explicit Bash Fallback
+
+If you wish to force the legacy Bash implementation:
+
+```bash
+./disk-explorer.sh --bash [PATH]
+```
 
 ---
 
 ## Usage
 
 ```bash
-# Current directory (interactive TUI)
+# Current directory
 ./disk-explorer.sh
 
 # Specific path
 ./disk-explorer.sh /var
 
-# Quick summary (non-interactive)
-./disk-explorer.sh --summary /home
-
-# Timestamped report
-./disk-explorer.sh --report --report-dir /tmp/reports /srv
-
-# Tree view
-./disk-explorer.sh --tree --tree-depth 3 /home
-
-# Custom scan
-./disk-explorer.sh --mode global --sort mtime --top-count 20 --top-files 30 /data
-
-# Diagnose dependencies
-./disk-explorer.sh --self-check
-
-# Remote scan on multiple machines (SSH key auth required)
-./disk-explorer.sh --remote \
-  --remote-hosts user@web1,user@web2 \
-  --remote-path /var/log \
-  --remote-report-dir ./reports
-
-# Remote with a hosts file and custom SSH key
-./disk-explorer.sh --remote \
-  --remote-hosts-file ./hosts.txt \
-  --remote-ssh-opt "-i ~/.ssh/id_ed25519" \
-  --remote-timeout 15
+# Remote scan via native Go SSH
+./disk-explorer.sh --remote --remote-hosts user@host1,user@host2
 ```
 
 ### TUI key bindings
 
 | Key | Action |
 |---|---|
-| `↑` `↓` | Navigate list |
-| `Enter` | Open directory |
-| `d` | Delete selected item (confirmation required) |
-| `0` | Go to parent directory |
-| `1`–`9` | Jump directly to entry N |
-| `s` | Toggle sort: size / mtime |
-| `a` | Toggle file size: real blocks / apparent |
-| `p` | Toggle scan mode: partition / global |
-| `f` | Show largest files (recursive) |
-| `r` | Generate report |
-| `e` | Show/edit exclusions |
-| `c` | Config menu |
-| `h` / `?` | Help |
+| `↑` `↓` (or `k` `j`) | Navigate list |
+| `Enter` | Open directory (Lazy Scan) |
+| `Backspace` (or `←` `h`) | Go up to parent directory |
+| `s` | Sort by Size (toggle Asc/Desc) |
+| `n` | Sort by Name (toggle Asc/Desc) |
+| `t` | Sort by Date (toggle Asc/Desc) |
 | `q` | Quit |
-
----
-
-## Options
-
-```text
---path DIR               Directory to analyse (default: current)
---mode partition|global  Stay on one filesystem or traverse all mounts
---sort size|mtime        Sort by size (default) or last modified
---file-size real|apparent
---top-count N            Max directories shown (default: 15)
---top-files N            Max files shown in file view
---max-depth N            Max recursion depth for file scan
---exclude DIR            Exclude a directory (repeatable)
---no-default-excludes    Disable built-in exclusions (proc, sys, dev…)
---summary                Non-interactive summary then exit
---tree                   Tree view with sizes and % of parent
---tree-depth N
---report                 Write timestamped report to file
---report-dir DIR
---no-color
---no-spinner
---self-check             Diagnose runtime dependencies
---help
-
-Remote SSH options:
---remote                 Run on remote machines via SSH then exit
---remote-hosts HOSTS     Comma-separated list of targets (repeatable)
-                           e.g. user@host1,host2  or  root@10.0.0.1
---remote-hosts-file FILE One host per line; # lines are comments
---remote-path DIR        Directory to scan on each target (default: /)
---remote-report-dir DIR  Local directory for per-host reports (default: ./remote-reports)
---remote-timeout N       SSH ConnectTimeout in seconds (default: 10)
---remote-ssh-opt OPT     Extra option passed to ssh(1), repeatable
-                           e.g. -i ~/.ssh/key  or  -p 2222
-```
-
----
-
-## Requirements
-
-GNU/Linux with Bash ≥ 4.4. Standard GNU coreutils (`find`, `du`, `sort`, `head`, `df`, `date`). `numfmt` recommended (graceful fallback if absent).
-
-macOS with Homebrew GNU coreutils is partially supported.
-
-**Remote mode** additionally requires `ssh` on the orchestrating machine and SSH key-based authentication to each target. Each target must also satisfy the Bash ≥ 4.4 + GNU coreutils requirement.
 
 ---
 
 ## Repository structure
 
 ```
-disk-explorer.sh      # single distributable file (generated by build.sh)
-build.sh              # assembles src/ → disk-explorer.sh
-src/
-  main.sh             # entry point, arg parsing, globals
-  utils.sh            # pure helpers (human_size, sanitize, platform…)
-  scan.sh             # du/find scan functions, temp file management
-  display.sh          # non-interactive modes (summary, report, tree)
-  tui.sh              # full-screen TUI (draw, input, navigation)
-  remote.sh           # SSH orchestration: remote_run_host, remote_run_all
-tests/
-  run_tests.sh        # custom test suite
-  *.bats              # bats test suite
+disk-explorer.sh      # distribution script (bootstrap + bash fallback)
+build.sh              # build orchestrator (Go build + Bash assembly)
+cmd/disk-explorer/    # Go entry point
+internal/
+  tui/                # Bubble Tea UI logic
+  scanner/            # Parallel directory scanner
+  remote/             # Native Go SSH client
+  assets/             # Embedded bash script for fallback/remote
+src/                  # Original Bash implementation (modules)
 docs/
-  superpowers/        # design specs and implementation plans
+  superpowers/        # architecture and implementation history
 ```
 
-Build after editing any `src/` file:
+---
 
-```bash
-./build.sh
-```
+## Requirements
+
+- **Go version (default)**: Linux or macOS (amd64/arm64).
+- **Bash version (fallback)**: GNU/Linux with Bash ≥ 4.4 and standard GNU coreutils.
 
 ---
 

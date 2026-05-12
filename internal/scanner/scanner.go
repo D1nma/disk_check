@@ -1,58 +1,76 @@
 package scanner
 
 import (
-    "os"
-    "path/filepath"
-    "sync"
+	"context"
+	"os"
+	"path/filepath"
+	"sync"
 )
 
 // Scan recursively scans the root directory using the specified number of concurrent workers.
-// It returns a channel that will receive ScanResults as directories are processed.
-func Scan(root string, concurrency int) <-chan ScanResult {
-    results := make(chan ScanResult)
-    var wg sync.WaitGroup
-    sem := make(chan struct{}, concurrency)
+// It returns a receive-only channel that will receive individual entries as they are discovered.
+func Scan(ctx context.Context, root string, concurrency int) <-chan Entry {
+	entries := make(chan Entry, 64) // Buffered to improve performance
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, concurrency)
 
-    go func() {
-        defer close(results)
-        wg.Add(1)
-        scanDir(root, results, &wg, sem)
-        wg.Wait()
-    }()
+	// Start the initial scan
+	wg.Add(1)
+	go scanDir(ctx, root, entries, &wg, sem)
 
-    return results
+	// Closer goroutine
+	go func() {
+		wg.Wait()
+		close(entries)
+	}()
+
+	return entries
 }
 
-func scanDir(path string, results chan<- ScanResult, wg *sync.WaitGroup, sem chan struct{}) {
-    defer wg.Done()
-    
-    // Acquire semaphore
-    sem <- struct{}{}
-    defer func() { <-sem }()
+func scanDir(ctx context.Context, path string, entries chan<- Entry, wg *sync.WaitGroup, sem chan struct{}) {
+	defer wg.Done()
 
-    entries, err := os.ReadDir(path)
-    if err != nil {
-        results <- ScanResult{Error: err}
-        return
-    }
+	// Limit concurrency
+	select {
+	case <-ctx.Done():
+		return
+	case sem <- struct{}{}:
+		defer func() { <-sem }()
+	}
 
-    var resultEntries []Entry
-    for _, e := range entries {
-        info, err := e.Info()
-        if err != nil {
-            continue
-        }
-        entry := Entry{
-            Path:    filepath.Join(path, e.Name()),
-            Size:    info.Size(),
-            IsDir:   e.IsDir(),
-            ModTime: info.ModTime(),
-        }
-        resultEntries = append(resultEntries, entry)
-        if e.IsDir() {
-            wg.Add(1)
-            go scanDir(entry.Path, results, wg, sem)
-        }
-    }
-    results <- ScanResult{Entries: resultEntries}
+	dirEntries, err := os.ReadDir(path)
+	if err != nil {
+		return
+	}
+
+	for _, e := range dirEntries {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		entry := Entry{
+			Path:    filepath.Join(path, e.Name()),
+			Size:    info.Size(),
+			IsDir:   e.IsDir(),
+			ModTime: info.ModTime(),
+		}
+
+		// Send entry to channel with cancellation check to avoid leaks
+		select {
+		case entries <- entry:
+		case <-ctx.Done():
+			return
+		}
+
+		if e.IsDir() {
+			wg.Add(1)
+			go scanDir(ctx, entry.Path, entries, wg, sem)
+		}
+	}
 }
