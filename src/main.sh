@@ -25,8 +25,8 @@ if [[ ! -t 0 && -t 1 && -z "${BASH_SOURCE[0]:-}" && -z "${_DISK_EXPLORER_REEXEC:
 fi
 
 # Reconnect stdin to TTY if redirected (supports curl | bash or bash < script.sh)
-if [[ ! -t 0 && -t 1 ]] && exec < /dev/tty 2>/dev/null; then
-  : # Stdin reconnected successfully
+if [[ ! -t 0 && -t 1 ]]; then
+  exec < /dev/tty 2>/dev/null || :
 fi
 
 VERSION="v0.2.0" # Placeholder, should be updated by build process

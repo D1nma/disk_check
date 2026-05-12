@@ -25,11 +25,11 @@ if [[ ! -t 0 && -t 1 && -z "${BASH_SOURCE[0]:-}" && -z "${_DISK_EXPLORER_REEXEC:
 fi
 
 # Reconnect stdin to TTY if redirected (supports curl | bash or bash < script.sh)
-if [[ ! -t 0 && -t 1 ]] && exec < /dev/tty 2>/dev/null; then
-  : # Stdin reconnected successfully
+if [[ ! -t 0 && -t 1 ]]; then
+  exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="16711a3"
+VERSION="e0165aa"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -1417,15 +1417,15 @@ _tui_scan_to_file() {
   [[ -n "$SCAN_WARNING" && -z "$warn" ]] && warn="$SCAN_WARNING"
 
   {
-    "$AWK_CMD" -v RS='\0' '{
+    "$AWK_CMD" -v RS='\0' -v ORS='\0' '{
       tab = index($0, "\t")
       if (tab == 0 || length($0) <= 1) next
-      printf "%s\td:%s%c", substr($0,1,tab-1), substr($0,tab+1), 0
+      print substr($0,1,tab-1) "\td:" substr($0,tab+1)
     }' "$tmp_dirs"
-    "$AWK_CMD" -v RS='\0' '{
+    "$AWK_CMD" -v RS='\0' -v ORS='\0' '{
       tab = index($0, "\t")
       if (tab == 0 || length($0) <= 1) next
-      printf "%s\tf:%s%c", substr($0,1,tab-1), substr($0,tab+1), 0
+      print substr($0,1,tab-1) "\tf:" substr($0,tab+1)
     }' "$tmp_files"
   } | LC_ALL=C "$SORT_CMD" -zrn | "$HEAD_CMD" -z -n "$TOP_COUNT" > "$out_file"
 

@@ -365,15 +365,15 @@ _tui_scan_to_file() {
   [[ -n "$SCAN_WARNING" && -z "$warn" ]] && warn="$SCAN_WARNING"
 
   {
-    "$AWK_CMD" -v RS='\0' '{
+    "$AWK_CMD" -v RS='\0' -v ORS='\0' '{
       tab = index($0, "\t")
       if (tab == 0 || length($0) <= 1) next
-      printf "%s\td:%s%c", substr($0,1,tab-1), substr($0,tab+1), 0
+      print substr($0,1,tab-1) "\td:" substr($0,tab+1)
     }' "$tmp_dirs"
-    "$AWK_CMD" -v RS='\0' '{
+    "$AWK_CMD" -v RS='\0' -v ORS='\0' '{
       tab = index($0, "\t")
       if (tab == 0 || length($0) <= 1) next
-      printf "%s\tf:%s%c", substr($0,1,tab-1), substr($0,tab+1), 0
+      print substr($0,1,tab-1) "\tf:" substr($0,tab+1)
     }' "$tmp_files"
   } | LC_ALL=C "$SORT_CMD" -zrn | "$HEAD_CMD" -z -n "$TOP_COUNT" > "$out_file"
 
