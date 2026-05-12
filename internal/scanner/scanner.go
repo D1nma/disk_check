@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sync"
@@ -8,7 +9,7 @@ import (
 
 // Scan recursively scans the root directory using the specified number of concurrent workers.
 // It returns a channel that will receive individual entries as they are discovered.
-func Scan(root string, concurrency int) chan Entry {
+func Scan(ctx context.Context, root string, concurrency int) chan Entry {
 	entries := make(chan Entry)
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, concurrency)
@@ -16,19 +17,22 @@ func Scan(root string, concurrency int) chan Entry {
 	go func() {
 		defer close(entries)
 		wg.Add(1)
-		scanDir(root, entries, &wg, sem)
+		scanDir(ctx, root, entries, &wg, sem)
 		wg.Wait()
 	}()
 
 	return entries
 }
 
-func scanDir(path string, entries chan<- Entry, wg *sync.WaitGroup, sem chan struct{}) {
+func scanDir(ctx context.Context, path string, entries chan<- Entry, wg *sync.WaitGroup, sem chan struct{}) {
 	defer wg.Done()
 
-	// Acquire semaphore
-	sem <- struct{}{}
-	defer func() { <-sem }()
+	select {
+	case <-ctx.Done():
+		return
+	case sem <- struct{}{}:
+		defer func() { <-sem }()
+	}
 
 	dirEntries, err := os.ReadDir(path)
 	if err != nil {
@@ -38,6 +42,13 @@ func scanDir(path string, entries chan<- Entry, wg *sync.WaitGroup, sem chan str
 	}
 
 	for _, e := range dirEntries {
+		// Check context again inside loop for long directories
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		info, err := e.Info()
 		if err != nil {
 			continue
@@ -51,7 +62,7 @@ func scanDir(path string, entries chan<- Entry, wg *sync.WaitGroup, sem chan str
 		entries <- entry
 		if e.IsDir() {
 			wg.Add(1)
-			go scanDir(entry.Path, entries, wg, sem)
+			go scanDir(ctx, entry.Path, entries, wg, sem)
 		}
 	}
 }

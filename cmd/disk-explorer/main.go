@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -15,7 +16,7 @@ func main() {
 		path = os.Args[1]
 	}
 
-	entriesChan := scanner.Scan(path, 4)
+	entriesChan := scanner.Scan(context.Background(), path, 4)
 
 	m := tui.Model{
 		Path:        path,
