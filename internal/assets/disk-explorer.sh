@@ -29,7 +29,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="17c50f6"
+VERSION="3bcff86"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -2968,7 +2968,7 @@ main() {
             _tui_scan_shallow_files _tui_scan_to_file update_scan_warning \
             sanitize_for_display build_du_cmd build_find_prefix \
             refresh_active_exclusions path_is_equal_or_within wait_for_job human_size
-VERSION="v0.5.0-ULTIMATUM" # Major logic refactor
+VERSION="v0.6.0-RESILIENT" # Absolute fix for TEMP_ROOT and caching
 ...
   if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
     # Check TTY without redirection to avoid false negatives in log
