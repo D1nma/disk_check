@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,7 +29,8 @@ func TestScan(t *testing.T) {
 		t.Fatalf("Failed to create file2: %v", err)
 	}
 
-	results := Scan(tmpDir, 2)
+	ctx := context.Background()
+	results := Scan(ctx, tmpDir, 2)
 
 	var allEntries []Entry
 	for entry := range results {
@@ -54,5 +56,40 @@ func TestScan(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("file2.txt not found in scan results")
+	}
+}
+
+func TestScanContextCancellation(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "scanner_cancel_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a larger structure to ensure we have time to cancel
+	for i := 0; i < 10; i++ {
+		dir := filepath.Join(tmpDir, "dir"+filepath.Join(string(rune('a'+i))))
+		os.MkdirAll(dir, 0755)
+		for j := 0; j < 10; j++ {
+			file := filepath.Join(dir, "file"+filepath.Join(string(rune('a'+j))))
+			os.WriteFile(file, []byte("test"), 0644)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel immediately or very soon
+	cancel()
+
+	results := Scan(ctx, tmpDir, 2)
+
+	count := 0
+	for range results {
+		count++
+	}
+
+	// Since we cancelled immediately, we expect very few or zero results
+	// The exact number depends on race conditions but it should definitely be less than 110
+	if count >= 110 {
+		t.Errorf("Expected scan to be cancelled, but got %d entries", count)
 	}
 }
