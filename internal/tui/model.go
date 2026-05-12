@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"github.com/D1nma/disk_check/internal/scanner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,6 +16,8 @@ type Model struct {
 	Height      int
 	Scanning    bool
 	ScannerChan chan scanner.Entry
+	CancelScan  context.CancelFunc // Store current scan cancel function
+	History     []string           // Directory stack for navigation
 }
 
 type NewEntryMsg scanner.Entry
@@ -45,6 +48,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
+			if m.CancelScan != nil {
+				m.CancelScan()
+			}
 			return m, tea.Quit
 		case "up", "k":
 			if m.Selected > 0 {
@@ -55,15 +61,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Selected++
 			}
 		case "enter":
-			// TODO: navigate into directory
-		case "backspace":
-			// TODO: navigate up
+			if len(m.Entries) > 0 && m.Entries[m.Selected].IsDir {
+				// Save current path to history before navigating deeper
+				m.History = append(m.History, m.Path)
+				return m.navigateTo(m.Entries[m.Selected].Path)
+			}
+		case "backspace", "left", "h":
+			if len(m.History) > 0 {
+				last := m.History[len(m.History)-1]
+				m.History = m.History[:len(m.History)-1]
+				return m.navigateTo(last)
+			}
 		}
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
 	}
 	return m, nil
+}
+
+func (m Model) navigateTo(newPath string) (tea.Model, tea.Cmd) {
+	if m.CancelScan != nil {
+		m.CancelScan()
+	}
+
+	// Reset entries and start new scan
+	ctx, cancel := context.WithCancel(context.Background())
+	m.CancelScan = cancel
+	m.Path = newPath
+	m.Entries = nil
+	m.Selected = 0 // Reset selection
+	m.ScannerChan = scanner.Scan(ctx, newPath, 4)
+	return m, listenForEntries(m.ScannerChan)
 }
 
 func (m Model) View() string {

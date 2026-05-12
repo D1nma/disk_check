@@ -16,13 +16,15 @@ func main() {
 		path = os.Args[1]
 	}
 
-	entriesChan := scanner.Scan(context.Background(), path, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	entriesChan := scanner.Scan(ctx, path, 4)
 
 	m := tui.Model{
 		Path:        path,
 		Entries:     []scanner.Entry{},
 		ScannerChan: entriesChan,
 		Scanning:    true,
+		CancelScan:  cancel,
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
