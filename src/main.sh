@@ -114,18 +114,23 @@ RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' DIM='' NC=''
 trap cleanup EXIT
 trap on_interrupt INT TERM
 
-init_colors() {
-  if [[ "$NO_COLOR" -eq 0 && -t 1 ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'
-    CYAN='\033[0;36m'
-    MAGENTA='\033[0;35m'
-    BOLD='\033[1m'
-    DIM='\033[2m'
-    NC='\033[0m'
-  fi
+try_go_binary() {
+    # Bypass if --bash flag is present
+    for arg in "$@"; do [[ "$arg" == "--bash" ]] && return; done
+    
+    local os arch binary
+    os=$(get_os)
+    arch=$(get_arch)
+    binary="${CACHE_DIR}/disk-explorer"
+
+    if [[ ! -x "$binary" ]]; then
+        # Try to download
+        download_binary "$os" "$arch" "$binary" >/dev/null 2>&1 || return
+    fi
+
+    if [[ -x "$binary" ]]; then
+        exec "$binary" "$@"
+    fi
 }
 
 download_binary() {
@@ -141,6 +146,20 @@ download_binary() {
         return 1
     fi
     chmod +x "$target"
+}
+
+init_colors() {
+  if [[ "$NO_COLOR" -eq 0 && -t 1 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    MAGENTA='\033[0;35m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+  fi
 }
 
 init_runtime_flags() {
@@ -303,6 +322,7 @@ Options:
   --no-default-excludes     N'utilise pas les exclusions par défaut
   --no-color                Désactive les couleurs
   --no-spinner              Désactive le spinner
+  --bash                    Force l'utilisation de l'implémentation Bash
   -h, --help                Aide
 
 Mode Remote SSH (--remote) :
@@ -429,6 +449,9 @@ parse_args() {
         ;;
       --no-spinner)
         NO_SPINNER=1
+        ;;
+      --bash)
+        # Ignoré ici, déjà traité par le shim try_go_binary
         ;;
       --remote)
         RUN_MODE="remote"
@@ -577,5 +600,6 @@ main() {
 
 # :-  : BASH_SOURCE[0] is unset/empty when piped to bash (curl … | bash), set -u requires default.
 if [[ "${BASH_SOURCE[0]:-}" == "${0}" || -z "${BASH_SOURCE[0]:-}" ]]; then
+  try_go_binary "$@"
   main "$@"
 fi
