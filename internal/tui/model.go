@@ -8,6 +8,14 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+type SortKey int
+
+const (
+	SortSize SortKey = iota
+	SortName
+	SortDate
+)
+
 type Model struct {
 	Path        string
 	Entries     []scanner.Entry
@@ -18,6 +26,8 @@ type Model struct {
 	ScannerChan chan scanner.Entry
 	CancelScan  context.CancelFunc // Store current scan cancel function
 	History     []string           // Directory stack for navigation
+	SortBy      SortKey
+	SortReverse bool
 }
 
 type NewEntryMsg scanner.Entry
