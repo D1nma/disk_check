@@ -31,12 +31,8 @@ func TestScan(t *testing.T) {
 	results := Scan(tmpDir, 2)
 
 	var allEntries []Entry
-	for res := range results {
-		if res.Error != nil {
-			t.Errorf("Scan error: %v", res.Error)
-			continue
-		}
-		allEntries = append(allEntries, res.Entries...)
+	for entry := range results {
+		allEntries = append(allEntries, entry)
 	}
 
 	// We expect 3 entries: dir1, file1.txt, and file2.txt
@@ -58,20 +54,5 @@ func TestScan(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("file2.txt not found in scan results")
-	}
-}
-
-func TestScanNonExistent(t *testing.T) {
-	results := Scan("/non/existent/path/for/sure", 2)
-	
-	var errFound bool
-	for res := range results {
-		if res.Error != nil {
-			errFound = true
-		}
-	}
-	
-	if !errFound {
-		t.Errorf("Expected error for non-existent path, got none")
 	}
 }

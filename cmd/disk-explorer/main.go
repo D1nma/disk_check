@@ -1,7 +1,32 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+
+	"github.com/D1nma/disk_check/internal/scanner"
+	"github.com/D1nma/disk_check/internal/tui"
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 func main() {
-    fmt.Println("Disk Explorer Go")
+	path := "."
+	if len(os.Args) > 1 {
+		path = os.Args[1]
+	}
+
+	entriesChan := scanner.Scan(path, 4)
+
+	m := tui.Model{
+		Path:        path,
+		Entries:     []scanner.Entry{},
+		ScannerChan: entriesChan,
+		Scanning:    true,
+	}
+
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		fmt.Printf("Error running program: %v\n", err)
+		os.Exit(1)
+	}
 }
