@@ -29,7 +29,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="5912b5a"
+VERSION="17c50f6"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -1718,6 +1718,10 @@ draw_list() {
   _tui_precompute_list_stats
 
   if (( total == 0 )); then
+    if [[ "$_TUI_SCAN_PID" -gt 0 ]]; then
+      # Scan in progress, don't show "No results"
+      return
+    fi
     tput cup 3 0 2>/dev/null || true
     printf '%s\r\n' "$(_tui_pad "  Aucun sous-dossier accessible." "$COLUMNS")"
     (( row++ ))
@@ -2959,8 +2963,12 @@ main() {
 
   check_runtime_requirements
 
-  export AWK_CMD FIND_CMD SORT_CMD HEAD_CMD DU_CMD NUMFMT_CMD PLATFORM VERSION DEBUG_TUI
-VERSION="v0.2.5-ULTRA-RESILIENT" # Final attempt at fixing the scan
+  export AWK_CMD FIND_CMD SORT_CMD HEAD_CMD DU_CMD NUMFMT_CMD PLATFORM VERSION DEBUG_TUI TEMP_ROOT
+  export -f make_temp_file init_temp_root scan_subdirs_to_file scan_top_files_to_file \
+            _tui_scan_shallow_files _tui_scan_to_file update_scan_warning \
+            sanitize_for_display build_du_cmd build_find_prefix \
+            refresh_active_exclusions path_is_equal_or_within wait_for_job human_size
+VERSION="v0.5.0-ULTIMATUM" # Major logic refactor
 ...
   if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
     # Check TTY without redirection to avoid false negatives in log
