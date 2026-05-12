@@ -17,7 +17,7 @@ fi
 
 set -u -o pipefail
 
-VERSION="de0d063"
+VERSION="24eb4ca"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -79,6 +79,7 @@ SORT_CMD="sort"
 HEAD_CMD="head"
 DU_CMD="du"
 NUMFMT_CMD="numfmt"
+AWK_CMD="awk"
 
 declare -a EXTRA_EXCLUDED_DIRS=()
 declare -a EXCLUDED_DIRS=()
@@ -452,14 +453,14 @@ get_df_fields() {
     [[ -z "$df_out" ]] && return 1
     # Colonnes : Filesystem 1024-blocs Used Available Capacity [iused ifree %iused] Mounted-on
     # printf "%d" évite la notation scientifique sur les disques > 1 To.
-    size=$(awk '{printf "%d\n", $2 * 1024}' <<< "$df_out")
-    used=$(awk '{printf "%d\n", $3 * 1024}' <<< "$df_out")
-    avail=$(awk '{printf "%d\n", $4 * 1024}' <<< "$df_out")
-    usep=$(awk '{print $5}' <<< "$df_out")
+    size=$("$AWK_CMD" '{printf "%d\n", $2 * 1024}' <<< "$df_out")
+    used=$("$AWK_CMD" '{printf "%d\n", $3 * 1024}' <<< "$df_out")
+    avail=$("$AWK_CMD" '{printf "%d\n", $4 * 1024}' <<< "$df_out")
+    usep=$("$AWK_CMD" '{print $5}' <<< "$df_out")
     # Le mount point commence après Capacity ($5) ; peut contenir des espaces.
     # Sur APFS avec colonnes inode, le mount point est le premier champ commençant par "/".
     # Fallback sur $NF si aucun champ ne commence par "/".
-    mounted=$(awk '{
+    mounted=$("$AWK_CMD" '{
       for(i=6;i<=NF;i++){
         if($i~/^\//){
           for(j=i;j<=NF;j++) printf "%s%s",$j,(j<NF?" ":"")
@@ -559,7 +560,7 @@ scan_subdirs_to_file() {
 
     (
       "${du_cmd[@]}" |
-        awk -v RS='\0' -v ORS='\0' -v root="$CURRENT_DIR" '
+        "$AWK_CMD" -v RS='\0' -v ORS='\0' -v root="$CURRENT_DIR" '
           {
             tab = index($0, "\t")
             if (tab == 0) next
@@ -686,7 +687,7 @@ self_check_report() {
   fi
 
   local -A _cmd_map=(
-    [awk]="awk"
+    [awk]="$AWK_CMD"
     [find]="$FIND_CMD"
     [sort]="$SORT_CMD"
     [head]="$HEAD_CMD"
@@ -1023,7 +1024,7 @@ print_tree_view() {
       while IFS= read -r child; do
         [[ -z "$child" ]] && continue
         printf '%s\t%s\0' "${tree_size_map[$child]}" "$child"
-      done <<< "$children_raw" | LC_ALL=C "$SORT_CMD" -zrn | awk -v RS='\0' -v ORS='\0' -F '\t' '{sub(/^[^\t]*\t/, "", $0); print $0}'
+      done <<< "$children_raw" | LC_ALL=C "$SORT_CMD" -zrn | "$AWK_CMD" -v RS='\0' -v ORS='\0' -F '\t' '{sub(/^[^\t]*\t/, "", $0); print $0}'
     )
 
     local next_child
@@ -1404,12 +1405,12 @@ _tui_scan_to_file() {
   [[ -n "$SCAN_WARNING" && -z "$warn" ]] && warn="$SCAN_WARNING"
 
   {
-    awk -v RS='\0' '{
+    "$AWK_CMD" -v RS='\0' '{
       tab = index($0, "\t")
       if (tab == 0 || length($0) <= 1) next
       printf "%s\td:%s%c", substr($0,1,tab-1), substr($0,tab+1), 0
     }' "$tmp_dirs"
-    awk -v RS='\0' '{
+    "$AWK_CMD" -v RS='\0' '{
       tab = index($0, "\t")
       if (tab == 0 || length($0) <= 1) next
       printf "%s\tf:%s%c", substr($0,1,tab-1), substr($0,tab+1), 0
@@ -2465,6 +2466,9 @@ try_go_binary() {
     # Bypass if --bash flag is present
     for arg in "$@"; do [[ "$arg" == "--bash" ]] && return; done
     
+    # Only try to download/use Go binary if it looks like a release version (starts with v)
+    [[ "$VERSION" == v* ]] || return
+
     local os arch binary
     os=$(get_os)
     arch=$(get_arch)
@@ -2516,7 +2520,22 @@ init_runtime_flags() {
     ENABLE_SPINNER=0
   fi
 
-  if [[ "$RUN_MODE" == "interactive" && ( ! -t 0 || ! -t 1 ) ]]; then
+  if [[ "$RUN_MODE" == "interactive" && ! -t 0 ]]; then
+    # Tente de reconnecter stdin au terminal (curl | bash support)
+    if [[ -c /dev/tty ]]; then
+      exec < /dev/tty
+    elif [[ "$OSTYPE" == darwin* ]]; then
+      # Sur macOS, /dev/tty est parfois absent mais stdin est qd même redirigé
+      # On reste prudent.
+      RUN_MODE="summary"
+      ENABLE_SPINNER=0
+    else
+      RUN_MODE="summary"
+      ENABLE_SPINNER=0
+    fi
+  fi
+
+  if [[ "$RUN_MODE" == "interactive" && ! -t 1 ]]; then
     RUN_MODE="summary"
     ENABLE_SPINNER=0
   fi
@@ -2586,6 +2605,7 @@ resolve_gnu_tools_macos() {
   _try_gnu_tool HEAD_CMD  ghead   coreutils
   _try_gnu_tool DU_CMD    gdu     coreutils
   _try_gnu_tool NUMFMT_CMD gnumfmt coreutils
+  _try_gnu_tool AWK_CMD   gawk    gawk
 
   unset -f _try_gnu_tool
 

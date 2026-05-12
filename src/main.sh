@@ -79,6 +79,7 @@ SORT_CMD="sort"
 HEAD_CMD="head"
 DU_CMD="du"
 NUMFMT_CMD="numfmt"
+AWK_CMD="awk"
 
 declare -a EXTRA_EXCLUDED_DIRS=()
 declare -a EXCLUDED_DIRS=()
@@ -118,6 +119,9 @@ try_go_binary() {
     # Bypass if --bash flag is present
     for arg in "$@"; do [[ "$arg" == "--bash" ]] && return; done
     
+    # Only try to download/use Go binary if it looks like a release version (starts with v)
+    [[ "$VERSION" == v* ]] || return
+
     local os arch binary
     os=$(get_os)
     arch=$(get_arch)
@@ -169,7 +173,22 @@ init_runtime_flags() {
     ENABLE_SPINNER=0
   fi
 
-  if [[ "$RUN_MODE" == "interactive" && ( ! -t 0 || ! -t 1 ) ]]; then
+  if [[ "$RUN_MODE" == "interactive" && ! -t 0 ]]; then
+    # Tente de reconnecter stdin au terminal (curl | bash support)
+    if [[ -c /dev/tty ]]; then
+      exec < /dev/tty
+    elif [[ "$OSTYPE" == darwin* ]]; then
+      # Sur macOS, /dev/tty est parfois absent mais stdin est qd même redirigé
+      # On reste prudent.
+      RUN_MODE="summary"
+      ENABLE_SPINNER=0
+    else
+      RUN_MODE="summary"
+      ENABLE_SPINNER=0
+    fi
+  fi
+
+  if [[ "$RUN_MODE" == "interactive" && ! -t 1 ]]; then
     RUN_MODE="summary"
     ENABLE_SPINNER=0
   fi
@@ -239,6 +258,7 @@ resolve_gnu_tools_macos() {
   _try_gnu_tool HEAD_CMD  ghead   coreutils
   _try_gnu_tool DU_CMD    gdu     coreutils
   _try_gnu_tool NUMFMT_CMD gnumfmt coreutils
+  _try_gnu_tool AWK_CMD   gawk    gawk
 
   unset -f _try_gnu_tool
 

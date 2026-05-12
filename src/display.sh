@@ -21,7 +21,7 @@ self_check_report() {
   fi
 
   local -A _cmd_map=(
-    [awk]="awk"
+    [awk]="$AWK_CMD"
     [find]="$FIND_CMD"
     [sort]="$SORT_CMD"
     [head]="$HEAD_CMD"
@@ -358,7 +358,7 @@ print_tree_view() {
       while IFS= read -r child; do
         [[ -z "$child" ]] && continue
         printf '%s\t%s\0' "${tree_size_map[$child]}" "$child"
-      done <<< "$children_raw" | LC_ALL=C "$SORT_CMD" -zrn | awk -v RS='\0' -v ORS='\0' -F '\t' '{sub(/^[^\t]*\t/, "", $0); print $0}'
+      done <<< "$children_raw" | LC_ALL=C "$SORT_CMD" -zrn | "$AWK_CMD" -v RS='\0' -v ORS='\0' -F '\t' '{sub(/^[^\t]*\t/, "", $0); print $0}'
     )
 
     local next_child

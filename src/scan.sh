@@ -150,14 +150,14 @@ get_df_fields() {
     [[ -z "$df_out" ]] && return 1
     # Colonnes : Filesystem 1024-blocs Used Available Capacity [iused ifree %iused] Mounted-on
     # printf "%d" évite la notation scientifique sur les disques > 1 To.
-    size=$(awk '{printf "%d\n", $2 * 1024}' <<< "$df_out")
-    used=$(awk '{printf "%d\n", $3 * 1024}' <<< "$df_out")
-    avail=$(awk '{printf "%d\n", $4 * 1024}' <<< "$df_out")
-    usep=$(awk '{print $5}' <<< "$df_out")
+    size=$("$AWK_CMD" '{printf "%d\n", $2 * 1024}' <<< "$df_out")
+    used=$("$AWK_CMD" '{printf "%d\n", $3 * 1024}' <<< "$df_out")
+    avail=$("$AWK_CMD" '{printf "%d\n", $4 * 1024}' <<< "$df_out")
+    usep=$("$AWK_CMD" '{print $5}' <<< "$df_out")
     # Le mount point commence après Capacity ($5) ; peut contenir des espaces.
     # Sur APFS avec colonnes inode, le mount point est le premier champ commençant par "/".
     # Fallback sur $NF si aucun champ ne commence par "/".
-    mounted=$(awk '{
+    mounted=$("$AWK_CMD" '{
       for(i=6;i<=NF;i++){
         if($i~/^\//){
           for(j=i;j<=NF;j++) printf "%s%s",$j,(j<NF?" ":"")
@@ -257,7 +257,7 @@ scan_subdirs_to_file() {
 
     (
       "${du_cmd[@]}" |
-        awk -v RS='\0' -v ORS='\0' -v root="$CURRENT_DIR" '
+        "$AWK_CMD" -v RS='\0' -v ORS='\0' -v root="$CURRENT_DIR" '
           {
             tab = index($0, "\t")
             if (tab == 0) next
