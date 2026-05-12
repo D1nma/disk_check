@@ -17,7 +17,7 @@ fi
 
 set -u -o pipefail
 
-VERSION="fdd8a5c"
+VERSION="de0d063"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
