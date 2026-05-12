@@ -29,7 +29,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="a8e21e6"
+VERSION="9fa78f9"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -635,9 +635,9 @@ update_scan_warning() {
     sample=$(head -n 1 -- "$err_file" 2>/dev/null)
     sample=${sample:-"détails non disponibles"}
     SCAN_WARNING="${context} : $(sanitize_for_display "$sample")"
-  elif (( job_rc > 128 )); then
+  elif (( job_rc > 128 && job_rc != 141 )); then
     SCAN_WARNING="${context} : commande interrompue par signal $((job_rc - 128))"
-  elif (( job_rc != 0 )); then
+  elif (( job_rc != 0 && job_rc != 141 )); then
     SCAN_WARNING="${context} : commande terminée avec code ${job_rc}"
   fi
 }
