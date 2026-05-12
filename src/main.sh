@@ -67,6 +67,7 @@ FILE_SIZE_MODE="real"     # real | apparent
 ANALYSIS_MODE="partition" # partition | global
 RUN_MODE="interactive"    # interactive | summary | report | tree
 SELF_CHECK_ONLY=0
+DEBUG_TUI=0
 
 USE_DEFAULT_EXCLUDES=1
 # Conforme no-color.org : toute variable NO_COLOR définie (même vide) désactive les couleurs.
@@ -444,6 +445,9 @@ parse_args() {
         ;;
       --self-check)
         SELF_CHECK_ONLY=1
+        ;;
+      --debug-tui)
+        DEBUG_TUI=1
         ;;
       --interactive)
         RUN_MODE="interactive"

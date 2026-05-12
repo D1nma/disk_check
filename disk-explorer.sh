@@ -29,7 +29,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="dd7d201"
+VERSION="7031409"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -67,6 +67,7 @@ FILE_SIZE_MODE="real"     # real | apparent
 ANALYSIS_MODE="partition" # partition | global
 RUN_MODE="interactive"    # interactive | summary | report | tree
 SELF_CHECK_ONLY=0
+DEBUG_TUI=0
 
 USE_DEFAULT_EXCLUDES=1
 # Conforme no-color.org : toute variable NO_COLOR définie (même vide) désactive les couleurs.
@@ -1410,11 +1411,27 @@ _tui_scan_to_file() {
   tmp_files=$(make_temp_file)  || return 1
   err_files=$(make_temp_file)  || return 1
 
+  if [[ "$DEBUG_TUI" -eq 1 ]]; then
+    printf "[DEBUG] Starting TUI scan at %s\n" "$(date)" > /tmp/disk-explorer.debug
+    printf "[DEBUG] CURRENT_DIR: %s\n" "$CURRENT_DIR" >> /tmp/disk-explorer.debug
+  fi
+
   scan_subdirs_to_file "$tmp_dirs" "$err_dirs"
+  local sub_rc=$?
   local warn="$SCAN_WARNING"
 
   _tui_scan_shallow_files "$tmp_files" "$err_files"
+  local file_rc=$?
   [[ -n "$SCAN_WARNING" && -z "$warn" ]] && warn="$SCAN_WARNING"
+
+  if [[ "$DEBUG_TUI" -eq 1 ]]; then
+    printf "[DEBUG] scan_subdirs_to_file rc: %d\n" "$sub_rc" >> /tmp/disk-explorer.debug
+    printf "[DEBUG] scan_subdirs_to_file output size: %d\n" "$(wc -c < "$tmp_dirs")" >> /tmp/disk-explorer.debug
+    printf "[DEBUG] scan_subdirs_to_file errors: %s\n" "$(cat "$err_dirs")" >> /tmp/disk-explorer.debug
+    printf "[DEBUG] _tui_scan_shallow_files rc: %d\n" "$file_rc" >> /tmp/disk-explorer.debug
+    printf "[DEBUG] _tui_scan_shallow_files output size: %d\n" "$(wc -c < "$tmp_files")" >> /tmp/disk-explorer.debug
+    printf "[DEBUG] _tui_scan_shallow_files errors: %s\n" "$(cat "$err_files")" >> /tmp/disk-explorer.debug
+  fi
 
   {
     "$AWK_CMD" -v RS='\0' -v ORS='\0' '{
@@ -1428,6 +1445,10 @@ _tui_scan_to_file() {
       print substr($0,1,tab-1) "\tf:" substr($0,tab+1)
     }' "$tmp_files"
   } | LC_ALL=C "$SORT_CMD" -zrn | "$HEAD_CMD" -z -n "$TOP_COUNT" > "$out_file"
+
+  if [[ "$DEBUG_TUI" -eq 1 ]]; then
+    printf "[DEBUG] final merged size: %d\n" "$(wc -c < "$out_file")" >> /tmp/disk-explorer.debug
+  fi
 
   # On sauve le warning dans un fichier si précisé, sinon variable globale
   if [[ -n "${_TUI_SCAN_WARNING_FILE-}" ]]; then
@@ -2791,6 +2812,9 @@ parse_args() {
         ;;
       --self-check)
         SELF_CHECK_ONLY=1
+        ;;
+      --debug-tui)
+        DEBUG_TUI=1
         ;;
       --interactive)
         RUN_MODE="interactive"
