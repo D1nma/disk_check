@@ -177,9 +177,10 @@ print_summary() {
   local sub_rc=0 files_rc=0
   local pid_sub pid_files
 
-  run_scan_subdirs_job "$tmp_sub" "$err_sub" "$warn_sub" &
+  # On lance les scans en parallèle manuellement ici
+  ( scan_subdirs_to_file "$tmp_sub" "$err_sub"; printf "%s" "$SCAN_WARNING" > "$warn_sub" ) &
   pid_sub=$!
-  run_scan_top_files_job "$tmp_files" "$err_files" "$warn_files" &
+  ( scan_top_files_to_file "$tmp_files" "$err_files"; printf "%s" "$SCAN_WARNING" > "$warn_files" ) &
   pid_files=$!
 
   wait "$pid_sub" || sub_rc=$?

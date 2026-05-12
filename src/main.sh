@@ -573,12 +573,12 @@ main() {
 
   check_runtime_requirements
 
+VERSION="v1.0.0-GOLD" # Stable release
+...
+  check_runtime_requirements
+
+  # Export critical variables
   export AWK_CMD FIND_CMD SORT_CMD HEAD_CMD DU_CMD NUMFMT_CMD PLATFORM VERSION DEBUG_TUI TEMP_ROOT
-  export -f make_temp_file init_temp_root scan_subdirs_to_file scan_top_files_to_file \
-            _tui_scan_shallow_files _tui_scan_to_file update_scan_warning \
-            sanitize_for_display build_du_cmd build_find_prefix \
-            refresh_active_exclusions path_is_equal_or_within wait_for_job human_size
-VERSION="v0.6.0-RESILIENT" # Absolute fix for TEMP_ROOT and caching
 ...
   if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
     # Check TTY without redirection to avoid false negatives in log

@@ -29,7 +29,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="3bcff86"
+VERSION="a8e21e6"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -562,32 +562,28 @@ scan_subdirs_to_file() {
     local -a find_cmd
     build_find_prefix find_cmd 1
 
-    (
-      "${find_cmd[@]}" -mindepth 1 -type d -printf '%T@\t%p\0' |
-        LC_ALL=C "$SORT_CMD" -zrn |
-        "$HEAD_CMD" -z -n "$TOP_COUNT"
-    ) >"$out_file" 2>"$err_file" &
+    "${find_cmd[@]}" -mindepth 1 -type d -printf '%T@\t%p\0' 2>"$err_file" |
+      LC_ALL=C "$SORT_CMD" -zrn |
+      "$HEAD_CMD" -z -n "$TOP_COUNT" >"$out_file"
+    job_rc=$?
   else
     local -a du_cmd
     build_du_cmd du_cmd
 
-    (
-      "${du_cmd[@]}" |
-        "$AWK_CMD" -v RS='\0' -v ORS='\0' -v root="$CURRENT_DIR" '
-          {
-            tab = index($0, "\t")
-            if (tab == 0) next
-            path = substr($0, tab + 1)
-            if (path != root) print $0
-          }
-        ' |
-        LC_ALL=C "$SORT_CMD" -zrn |
-        "$HEAD_CMD" -z -n "$TOP_COUNT"
-    ) >"$out_file" 2>"$err_file" &
+    "${du_cmd[@]}" 2>"$err_file" |
+      "$AWK_CMD" -v RS='\0' -v ORS='\0' -v root="$CURRENT_DIR" '
+        {
+          tab = index($0, "\t")
+          if (tab == 0) next
+          path = substr($0, tab + 1)
+          if (path != root) print $0
+        }
+      ' |
+      LC_ALL=C "$SORT_CMD" -zrn |
+      "$HEAD_CMD" -z -n "$TOP_COUNT" >"$out_file"
+    job_rc=$?
   fi
 
-  local pid=$!
-  wait_for_job "$pid" || job_rc=$?
   update_scan_warning "$err_file" "Analyse partielle possible" "$job_rc"
   return "$job_rc"
 }
@@ -605,9 +601,6 @@ scan_top_files_to_file() {
   local -a find_cmd
   local effective_find_maxdepth
   if (( MAX_DEPTH >= 0 )); then
-    # Le contrat utilisateur exprime une profondeur relative au dossier courant :
-    #   0 = fichiers du dossier courant, 1 = + fichiers des sous-dossiers directs, etc.
-    # Avec find, le point de départ lui-même est à profondeur 0 ; on décale donc de +1.
     effective_find_maxdepth=$((MAX_DEPTH + 1))
     build_find_prefix find_cmd "$effective_find_maxdepth"
   else
@@ -615,21 +608,17 @@ scan_top_files_to_file() {
   fi
 
   if [[ "$FILE_SIZE_MODE" == "apparent" ]]; then
-    (
-      "${find_cmd[@]}" -type f -printf '%s\t%p\0' |
-        LC_ALL=C "$SORT_CMD" -zrn |
-        "$HEAD_CMD" -z -n "$TOP_FILES_COUNT"
-    ) >"$out_file" 2>"$err_file" &
+    "${find_cmd[@]}" -type f -printf '%s\t%p\0' 2>"$err_file" |
+      LC_ALL=C "$SORT_CMD" -zrn |
+      "$HEAD_CMD" -z -n "$TOP_FILES_COUNT" >"$out_file"
+    job_rc=$?
   else
-    (
-      "${find_cmd[@]}" -type f -printf '%b\t%p\0' |
-        LC_ALL=C "$SORT_CMD" -zrn |
-        "$HEAD_CMD" -z -n "$TOP_FILES_COUNT"
-    ) >"$out_file" 2>"$err_file" &
+    "${find_cmd[@]}" -type f -printf '%b\t%p\0' 2>"$err_file" |
+      LC_ALL=C "$SORT_CMD" -zrn |
+      "$HEAD_CMD" -z -n "$TOP_FILES_COUNT" >"$out_file"
+    job_rc=$?
   fi
 
-  local pid=$!
-  wait_for_job "$pid" || job_rc=$?
   update_scan_warning "$err_file" "Analyse partielle possible" "$job_rc"
   return "$job_rc"
 }
@@ -856,9 +845,10 @@ print_summary() {
   local sub_rc=0 files_rc=0
   local pid_sub pid_files
 
-  run_scan_subdirs_job "$tmp_sub" "$err_sub" "$warn_sub" &
+  # On lance les scans en parallèle manuellement ici
+  ( scan_subdirs_to_file "$tmp_sub" "$err_sub"; printf "%s" "$SCAN_WARNING" > "$warn_sub" ) &
   pid_sub=$!
-  run_scan_top_files_job "$tmp_files" "$err_files" "$warn_files" &
+  ( scan_top_files_to_file "$tmp_files" "$err_files"; printf "%s" "$SCAN_WARNING" > "$warn_files" ) &
   pid_files=$!
 
   wait "$pid_sub" || sub_rc=$?
@@ -2963,12 +2953,12 @@ main() {
 
   check_runtime_requirements
 
+VERSION="v1.0.0-GOLD" # Stable release
+...
+  check_runtime_requirements
+
+  # Export critical variables
   export AWK_CMD FIND_CMD SORT_CMD HEAD_CMD DU_CMD NUMFMT_CMD PLATFORM VERSION DEBUG_TUI TEMP_ROOT
-  export -f make_temp_file init_temp_root scan_subdirs_to_file scan_top_files_to_file \
-            _tui_scan_shallow_files _tui_scan_to_file update_scan_warning \
-            sanitize_for_display build_du_cmd build_find_prefix \
-            refresh_active_exclusions path_is_equal_or_within wait_for_job human_size
-VERSION="v0.6.0-RESILIENT" # Absolute fix for TEMP_ROOT and caching
 ...
   if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
     # Check TTY without redirection to avoid false negatives in log
