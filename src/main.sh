@@ -17,7 +17,14 @@ fi
 
 set -u -o pipefail
 
-# Reconnect stdin to TTY if redirected (supports curl | bash)
+# If the script is being piped to bash (curl | bash), we re-execute it via bash -c
+# to decouple it from stdin, allowing us to reconnect stdin to /dev/tty for the TUI.
+if [[ ! -t 0 && -t 1 && -z "${BASH_SOURCE[0]:-}" && -z "${_DISK_EXPLORER_REEXEC:-}" ]]; then
+  export _DISK_EXPLORER_REEXEC=1
+  exec bash -c "$(cat)" bash "$@"
+fi
+
+# Reconnect stdin to TTY if redirected (supports curl | bash or bash < script.sh)
 if [[ ! -t 0 && -t 1 ]] && exec < /dev/tty 2>/dev/null; then
   : # Stdin reconnected successfully
 fi
