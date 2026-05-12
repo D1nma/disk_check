@@ -29,7 +29,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="e0165aa"
+VERSION="dd7d201"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
