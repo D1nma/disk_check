@@ -353,10 +353,14 @@ _TUI_SCAN_WARNING_FILE=""
 _tui_scan_to_file() {
   local out_file="$1"
   local tmp_dirs err_dirs tmp_files err_files
-  tmp_dirs=$(make_temp_file)   || return 1
-  err_dirs=$(make_temp_file)   || return 1
-  tmp_files=$(make_temp_file)  || return 1
-  err_files=$(make_temp_file)  || return 1
+  {
+    printf "[SCAN-ENTER] dir=%s TEMP_ROOT=%s TEMP_ROOT_exists=%s\n" \
+      "$CURRENT_DIR" "${TEMP_ROOT:-UNSET}" "$( [[ -d "${TEMP_ROOT:-}" ]] && echo yes || echo no )"
+  } >> /tmp/disk-scan-debug.txt
+  tmp_dirs=$(make_temp_file)   || { printf "[SCAN-FAIL] tmp_dirs make_temp_file failed rc=%d\n" "$?" >> /tmp/disk-scan-debug.txt; return 1; }
+  err_dirs=$(make_temp_file)   || { printf "[SCAN-FAIL] err_dirs make_temp_file failed rc=%d\n" "$?" >> /tmp/disk-scan-debug.txt; return 1; }
+  tmp_files=$(make_temp_file)  || { printf "[SCAN-FAIL] tmp_files make_temp_file failed rc=%d\n" "$?" >> /tmp/disk-scan-debug.txt; return 1; }
+  err_files=$(make_temp_file)  || { printf "[SCAN-FAIL] err_files make_temp_file failed rc=%d\n" "$?" >> /tmp/disk-scan-debug.txt; return 1; }
 
   if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
     printf "[DEBUG] Starting _tui_scan_to_file at %s\n" "$(date)" >&2
