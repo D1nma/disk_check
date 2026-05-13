@@ -17,7 +17,7 @@ trap 'rm -f "$TMP"' EXIT
 
 # On prépare d'abord le contenu pour avoir le bon hash de commit si on commit après.
 # Mais ici on veut le hash AU MOMENT du build.
-GIT_VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+GIT_VERSION=$(git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD 2>/dev/null || echo "dev")
 
 awk '
   /^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*\(\)/ { exit }

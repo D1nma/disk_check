@@ -32,6 +32,8 @@ func main() {
 		reportDir   string
 	)
 
+	var showVersion bool
+	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
 	flag.StringVar(&mode, "mode", "global", "Analysis mode: global (all filesystems) or partition (same device only)")
 	flag.BoolVar(&doSummary, "summary", false, "Print disk summary and exit")
 	flag.BoolVar(&doReport, "report", false, "Write report to file and exit")
@@ -40,6 +42,11 @@ func main() {
 	flag.IntVar(&topN, "top", 20, "Number of top entries to show in --summary/--report")
 	flag.StringVar(&reportDir, "report-dir", ".", "Output directory for --report")
 	flag.Parse()
+
+	if showVersion {
+		fmt.Printf("disk-explorer %s\n", version)
+		return
+	}
 
 	var excludes []string
 	if excludeFlag != "" {

@@ -126,22 +126,37 @@ trap on_interrupt INT TERM
 try_go_binary() {
     # Bypass if --bash flag is present
     for arg in "$@"; do [[ "$arg" == "--bash" ]] && return; done
-    
-    # Only try to download/use Go binary if it looks like a release version (starts with v)
-    [[ "$VERSION" == v* ]] || return
 
     local os arch binary
     os=$(get_os)
     arch=$(get_arch)
     binary="${CACHE_DIR}/disk-explorer"
 
-    if [[ ! -x "$binary" ]]; then
-        # Try to download
-        download_binary "$os" "$arch" "$binary" >/dev/null 2>&1 || return
-    fi
-
+    # Use cached binary if present and valid
     if [[ -x "$binary" ]]; then
         exec "$binary" "$@"
+    fi
+
+    # Only attempt download for tagged releases (VERSION must start with v + digit)
+    if [[ "$VERSION" =~ ^v[0-9] ]]; then
+        if download_binary "$os" "$arch" "$binary" 2>&1; then
+            [[ -x "$binary" ]] && exec "$binary" "$@"
+        else
+            printf "Info: téléchargement échoué, utilisation du mode bash\n" >&2
+        fi
+        return
+    fi
+
+    # Dev environment: try building locally with Go
+    if command -v go >/dev/null 2>&1; then
+        local src_dir
+        src_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+        if [[ -f "$src_dir/go.mod" ]]; then
+            mkdir -p "$(dirname "$binary")"
+            if go build -o "$binary" "$src_dir/cmd/disk-explorer" 2>/dev/null; then
+                exec "$binary" "$@"
+            fi
+        fi
     fi
 }
 
@@ -602,9 +617,6 @@ main() {
     return $?
   fi
 
-  check_runtime_requirements
-
-VERSION="v1.0.1-RESILIENT" # Fixed awk dependency for subdirs
   check_runtime_requirements
 
   # Export critical variables
