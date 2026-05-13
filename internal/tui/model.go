@@ -49,6 +49,8 @@ type diskInfoMsg struct {
 	Avail int64
 }
 
+type updateAvailableMsg struct{ tag string }
+
 // ── Model ────────────────────────────────────────────────────────────────────
 
 type Model struct {
@@ -61,6 +63,7 @@ type Model struct {
 	Height      int
 	Scanning    bool
 	ScannerChan <-chan scanner.Entry
+	UpdateChan  <-chan string
 	CancelScan  context.CancelFunc
 	History     []string
 	SortBy      SortKey
@@ -72,6 +75,9 @@ type Model struct {
 	diskUsed  int64
 	diskAvail int64
 
+	// set when a newer release is available
+	updateAvailable string
+
 	// generation counter — incremented on each navigation to discard stale messages
 	generation int
 }
@@ -81,11 +87,17 @@ func (m Model) Init() tea.Cmd {
 	if m.ScannerChan != nil {
 		cmds = append(cmds, listenForEntry(m.ScannerChan, m.generation))
 	}
+	if m.UpdateChan != nil {
+		cmds = append(cmds, listenForUpdate(m.UpdateChan))
+	}
 	return tea.Batch(cmds...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+
+	case updateAvailableMsg:
+		m.updateAvailable = msg.tag
 
 	case diskInfoMsg:
 		m.diskTotal = msg.Total
@@ -231,6 +243,16 @@ func (m Model) navigateTo(newPath string) (tea.Model, tea.Cmd) {
 
 // ── Commands ─────────────────────────────────────────────────────────────────
 
+func listenForUpdate(ch <-chan string) tea.Cmd {
+	return func() tea.Msg {
+		tag, ok := <-ch
+		if !ok || tag == "" {
+			return nil
+		}
+		return updateAvailableMsg{tag: tag}
+	}
+}
+
 func listenForEntry(ch <-chan scanner.Entry, gen int) tea.Cmd {
 	return func() tea.Msg {
 		e, ok := <-ch
@@ -353,6 +375,9 @@ func (m Model) View() string {
 	// Footer
 	footer := "[↑↓/jk] nav  [Enter] cd  [←/h] retour  [s]ize [n]ame [t]ime  [q]uit"
 	b.WriteString(dimStyle.Render(footer))
+	if m.updateAvailable != "" {
+		b.WriteString("\n" + yellowStyle.Render(fmt.Sprintf("  Mise à jour disponible : %s  (disk-explorer --update)", m.updateAvailable)))
+	}
 
 	return b.String()
 }

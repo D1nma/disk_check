@@ -15,6 +15,7 @@ import (
 	"github.com/D1nma/disk_check/internal/display"
 	"github.com/D1nma/disk_check/internal/scanner"
 	"github.com/D1nma/disk_check/internal/tui"
+	"github.com/D1nma/disk_check/internal/updater"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -27,13 +28,15 @@ func main() {
 		doSummary   bool
 		doReport    bool
 		doTree      bool
+		doUpdate    bool
+		showVersion bool
 		treeDepth   int
 		topN        int
 		reportDir   string
 	)
 
-	var showVersion bool
 	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
+	flag.BoolVar(&doUpdate, "update", false, "Download the latest release and exit")
 	flag.StringVar(&mode, "mode", "global", "Analysis mode: global (all filesystems) or partition (same device only)")
 	flag.BoolVar(&doSummary, "summary", false, "Print disk summary and exit")
 	flag.BoolVar(&doReport, "report", false, "Write report to file and exit")
@@ -45,6 +48,23 @@ func main() {
 
 	if showVersion {
 		fmt.Printf("disk-explorer %s\n", version)
+		return
+	}
+
+	if doUpdate {
+		tag, err := updater.LatestRelease()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: impossible de vérifier la dernière version: %v\n", err)
+			os.Exit(1)
+		}
+		if tag == version {
+			fmt.Printf("Déjà à jour (%s)\n", version)
+			return
+		}
+		if err := updater.SelfUpdate(tag); err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur de mise à jour: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -159,11 +179,20 @@ func runTUI(path string, opts scanner.ScanOptions) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ch := scanner.Scan(ctx, path, opts)
 
+	// Background update check — notifies TUI model when a new version is found
+	updateCh := make(chan string, 1)
+	go func() {
+		if latest, ok := updater.UpdateAvailable(version); ok {
+			updateCh <- latest
+		}
+	}()
+
 	m := tui.Model{
 		Path:        path,
 		Version:     version,
 		Entries:     []scanner.Entry{},
 		ScannerChan: ch,
+		UpdateChan:  updateCh,
 		Scanning:    true,
 		CancelScan:  cancel,
 		ScanOpts:    opts,
