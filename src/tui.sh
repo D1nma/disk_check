@@ -352,15 +352,24 @@ _TUI_SCAN_WARNING_FILE=""
 # Scanne et écrit dans un fichier temporaire (NUL-délimité, "valeur\ttype:chemin").
 _tui_scan_to_file() {
   local out_file="$1"
-  local tmp_dirs err_dirs tmp_files err_files
+  local tmp_dirs err_dirs tmp_files err_files _rc
   {
     printf "[SCAN-ENTER] dir=%s TEMP_ROOT=%s TEMP_ROOT_exists=%s\n" \
       "$CURRENT_DIR" "${TEMP_ROOT:-UNSET}" "$( [[ -d "${TEMP_ROOT:-}" ]] && echo yes || echo no )"
-  } >> /tmp/disk-scan-debug.txt
-  tmp_dirs=$(make_temp_file)   || { printf "[SCAN-FAIL] tmp_dirs make_temp_file failed rc=%d\n" "$?" >> /tmp/disk-scan-debug.txt; return 1; }
-  err_dirs=$(make_temp_file)   || { printf "[SCAN-FAIL] err_dirs make_temp_file failed rc=%d\n" "$?" >> /tmp/disk-scan-debug.txt; return 1; }
-  tmp_files=$(make_temp_file)  || { printf "[SCAN-FAIL] tmp_files make_temp_file failed rc=%d\n" "$?" >> /tmp/disk-scan-debug.txt; return 1; }
-  err_files=$(make_temp_file)  || { printf "[SCAN-FAIL] err_files make_temp_file failed rc=%d\n" "$?" >> /tmp/disk-scan-debug.txt; return 1; }
+  } >> /tmp/disk-scan-debug.txt 2>&1
+  printf "[PRE-A]\n" >> /tmp/disk-scan-debug.txt 2>&1
+  tmp_dirs=$(make_temp_file 2>&1); _rc=$?
+  printf "[POST-A] rc=%d path=%s\n" "$_rc" "$tmp_dirs" >> /tmp/disk-scan-debug.txt 2>&1
+  (( _rc == 0 )) || return 1
+  err_dirs=$(make_temp_file 2>&1); _rc=$?
+  printf "[POST-B] rc=%d path=%s\n" "$_rc" "$err_dirs" >> /tmp/disk-scan-debug.txt 2>&1
+  (( _rc == 0 )) || return 1
+  tmp_files=$(make_temp_file 2>&1); _rc=$?
+  printf "[POST-C] rc=%d path=%s\n" "$_rc" "$tmp_files" >> /tmp/disk-scan-debug.txt 2>&1
+  (( _rc == 0 )) || return 1
+  err_files=$(make_temp_file 2>&1); _rc=$?
+  printf "[POST-D] rc=%d path=%s\n" "$_rc" "$err_files" >> /tmp/disk-scan-debug.txt 2>&1
+  (( _rc == 0 )) || return 1
 
   if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
     printf "[DEBUG] Starting _tui_scan_to_file at %s\n" "$(date)" >&2
@@ -1052,6 +1061,7 @@ _tui_reload_subdirs() {
   export DU_CMD FIND_CMD SORT_CMD HEAD_CMD AWK_CMD DEBUG_TUI TEMP_ROOT
 
   (
+    trap 'printf "[SUBSHELL-EXIT] rc=%d line=%s\n" "$?" "${LINENO:-?}" >> /tmp/disk-scan-debug.txt 2>&1' EXIT
     # Désactiver set -u dans le subshell pour éviter les plantages sur variables vides
     set +u
     if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
