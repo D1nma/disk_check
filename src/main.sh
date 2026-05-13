@@ -147,16 +147,52 @@ try_go_binary() {
 
 download_binary() {
     local os=$1 arch=$2 target=$3
-    local url="${REPO_URL}/releases/download/${VERSION}/disk-explorer-${os}-${arch}"
-    
+    local name="disk-explorer-${os}-${arch}"
+    local url="${REPO_URL}/releases/download/${VERSION}/${name}"
+    local sums_url="${REPO_URL}/releases/download/${VERSION}/SHA256SUMS"
+    local tmp="${target}.tmp"
+
     mkdir -p "$(dirname "$target")"
+
+    printf "Téléchargement de disk-explorer %s (%s/%s)...\n" "$VERSION" "$os" "$arch" >&2
+
     if command -v curl >/dev/null 2>&1; then
-        curl -SLf "$url" -o "$target"
+        curl -#SLf "$url" -o "$tmp" 2>&1 || { rm -f "$tmp"; return 1; }
     elif command -v wget >/dev/null 2>&1; then
-        wget -q "$url" -O "$target"
+        wget --show-progress -q "$url" -O "$tmp" 2>&1 || { rm -f "$tmp"; return 1; }
     else
+        printf "Erreur: curl ou wget requis\n" >&2
         return 1
     fi
+
+    # SHA256 verification
+    local sha_cmd=""
+    command -v sha256sum >/dev/null 2>&1 && sha_cmd="sha256sum"
+    command -v shasum    >/dev/null 2>&1 && [[ -z "$sha_cmd" ]] && sha_cmd="shasum -a 256"
+    if [[ -n "$sha_cmd" ]]; then
+        local sums_file="${target}.sha256sums"
+        if command -v curl >/dev/null 2>&1; then
+            curl -SLf "$sums_url" -o "$sums_file" 2>/dev/null || true
+        else
+            wget -q "$sums_url" -O "$sums_file" 2>/dev/null || true
+        fi
+        if [[ -s "$sums_file" ]]; then
+            local expected actual
+            expected=$(grep "${name}$" "$sums_file" | awk '{print $1}')
+            if [[ -n "$expected" ]]; then
+                actual=$(eval "$sha_cmd" "$tmp" | awk '{print $1}')
+                if [[ "$actual" != "$expected" ]]; then
+                    rm -f "$tmp" "$sums_file"
+                    printf "Erreur: checksum SHA256 invalide pour %s\n" "$name" >&2
+                    return 1
+                fi
+                printf "Checksum OK\n" >&2
+            fi
+        fi
+        rm -f "$sums_file"
+    fi
+
+    mv "$tmp" "$target"
     chmod +x "$target"
 }
 

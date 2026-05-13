@@ -12,6 +12,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+var version = "dev"
+
 func main() {
 	var mode string
 	var excludeFlag string
@@ -19,8 +21,6 @@ func main() {
 	flag.StringVar(&mode, "mode", "global", "Analysis mode: global (all filesystems) or partition (same device only)")
 	flag.Parse()
 
-	// Support --exclude or -exclude flags manually (may appear multiple times)
-	// For simplicity parse from os.Args directly
 	var excludes []string
 	if excludeFlag != "" {
 		excludes = strings.Split(excludeFlag, ",")
@@ -46,6 +46,7 @@ func main() {
 
 	m := tui.Model{
 		Path:        path,
+		Version:     version,
 		Entries:     []scanner.Entry{},
 		ScannerChan: ch,
 		Scanning:    true,
@@ -55,7 +56,7 @@ func main() {
 
 	p := tea.NewProgram(m,
 		tea.WithAltScreen(),
-		tea.WithInputTTY(), // reconnects stdin to TTY when run via curl | bash
+		tea.WithInputTTY(),
 	)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

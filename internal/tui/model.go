@@ -53,6 +53,7 @@ type diskInfoMsg struct {
 
 type Model struct {
 	Path        string
+	Version     string
 	Entries     []scanner.Entry
 	Selected    int
 	Offset      int // scroll offset
@@ -281,7 +282,11 @@ func (m Model) View() string {
 	if m.ScanOpts.SameDevice {
 		modeLabel = "PARTITION"
 	}
-	header := fmt.Sprintf("DISK EXPLORER  %s  %s · %s%s", m.Path, modeLabel, sortLabel, scanMark)
+	ver := ""
+	if m.Version != "" && m.Version != "dev" {
+		ver = "  " + dimStyle.Render(m.Version)
+	}
+	header := fmt.Sprintf("DISK EXPLORER  %s  %s · %s%s", m.Path, modeLabel, sortLabel, scanMark) + ver
 	b.WriteString(boldStyle.Render(header) + "\n")
 
 	// Line 2: disk usage bar
