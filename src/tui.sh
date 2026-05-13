@@ -348,47 +348,97 @@ _TUI_SCAN_PID=0
 _TUI_SCAN_RESULT_FILE=""
 _TUI_SCAN_DONE_FILE=""
 _TUI_SCAN_WARNING_FILE=""
+_TUI_LAST_RESULT_BYTES=0
 
-# Scanne et écrit dans un fichier temporaire (NUL-délimité, "valeur\ttype:chemin").
+# Trie et limite les tableaux parallèles (paths/data/types) en mémoire.
+_tui_sort_and_limit() {
+  local -n __p="$1" __d="$2" __t="$3"
+  local n=${#__p[@]}
+  (( n == 0 )) && return 0
+
+  local i sort_input="" sf="-rn"
+  [[ "${SORT_MODE:-size}" == "name" ]] && sf=""
+
+  for (( i=0; i<n; i++ )); do
+    case "${SORT_MODE:-size}" in
+      name) sort_input+="${__p[$i]}"$'\t'"${__p[$i]}"$'\t'"${__d[$i]}"$'\t'"${__t[$i]}"$'\n' ;;
+      *)    sort_input+="${__d[$i]}"$'\t'"${__p[$i]}"$'\t'"${__d[$i]}"$'\t'"${__t[$i]}"$'\n' ;;
+    esac
+  done
+
+  local -a np=() nd=() nt=()
+  local _key _path _val _type
+  while IFS=$'\t' read -r _key _path _val _type; do
+    [[ -z "$_path" ]] && continue
+    np+=("$_path")
+    nd+=("$_val")
+    nt+=("$_type")
+    (( ${#np[@]} >= TOP_COUNT )) && break
+  done < <(printf '%s' "$sort_input" | LC_ALL=C sort $sf)
+
+  __p=("${np[@]+"${np[@]}"}")
+  __d=("${nd[@]+"${nd[@]}"}")
+  __t=("${nt[@]+"${nt[@]}"}")
+}
+
+# Scanne en streaming : chaque entrée est écrite dans out_file dès qu'elle est disponible.
 _tui_scan_to_file() {
   local out_file="$1"
-  local tmp_dirs err_dirs tmp_files err_files
+  local err_dirs err_files warn="" _du_rc=0 _find_rc=0
 
-  tmp_dirs=$(make_temp_file)  || return 1
-  err_dirs=$(make_temp_file)  || return 1
-  tmp_files=$(make_temp_file) || return 1
+  err_dirs=$(make_temp_file) || return 1
   err_files=$(make_temp_file) || return 1
 
-  scan_subdirs_to_file "$tmp_dirs" "$err_dirs"
-  local sub_rc=$?
-  local warn="$SCAN_WARNING"
-
-  _tui_scan_shallow_files "$tmp_files" "$err_files"
-  [[ -n "$SCAN_WARNING" && -z "$warn" ]] && warn="$SCAN_WARNING"
-
-  # Fusion résiliente sans awk -v RS='\0'
   : > "$out_file"
-  while IFS=$'\t' read -r -d '' val path; do
-    [[ "$path" == "$CURRENT_DIR" ]] && continue
-    printf '%s\td:%s\0' "$val" "$path" >> "$out_file"
-  done < "$tmp_dirs"
-  while IFS=$'\t' read -r -d '' val path; do
-    printf '%s\tf:%s\0' "$val" "$path" >> "$out_file"
-  done < "$tmp_files"
 
-  # Tri final
-  local tmp_sorted
-  tmp_sorted=$(make_temp_file) || return 1
-  LC_ALL=C "$SORT_CMD" -zrn "$out_file" | "$HEAD_CMD" -z -n "$TOP_COUNT" > "$tmp_sorted"
-  mv -f -- "$tmp_sorted" "$out_file"
-
-  if [[ -n "${_TUI_SCAN_WARNING_FILE-}" ]]; then
-    echo -n "$warn" > "$_TUI_SCAN_WARNING_FILE"
+  # Scan des sous-dossiers en streaming (du ou find selon SORT_MODE)
+  if [[ "${SORT_MODE:-size}" == "mtime" ]]; then
+    local -a find_cmd
+    build_find_prefix find_cmd 1
+    "${find_cmd[@]}" -mindepth 1 -type d -printf '%T@\t%p\0' 2>"$err_dirs" |
+      while IFS=$'\t' read -r -d '' ts path; do
+        [[ "$path" == "$CURRENT_DIR" ]] && continue
+        printf '%s\td:%s\0' "${ts%%.*}" "$path" >> "$out_file"
+      done
+    _du_rc=${PIPESTATUS[0]}
   else
-    SCAN_WARNING="$warn"
+    local -a du_cmd
+    build_du_cmd du_cmd
+    "${du_cmd[@]}" 2>"$err_dirs" |
+      while IFS=$'\t' read -r -d '' size path; do
+        [[ "$path" == "$CURRENT_DIR" ]] && continue
+        printf '%s\td:%s\0' "$size" "$path" >> "$out_file"
+      done
+    _du_rc=${PIPESTATUS[0]}
   fi
+  update_scan_warning "$err_dirs" "Analyse partielle possible" "$_du_rc"
+  warn="${SCAN_WARNING:-}"
 
-  rm -f -- "$tmp_dirs" "$err_dirs" "$tmp_files" "$err_files"
+  # Scan des fichiers en streaming (depth 1)
+  local -a find_cmd2
+  build_find_prefix find_cmd2 1
+  if [[ "${SORT_MODE:-size}" == "mtime" ]]; then
+    "${find_cmd2[@]}" -mindepth 1 -type f -printf '%T@\t%p\0' 2>"$err_files" |
+      while IFS=$'\t' read -r -d '' ts path; do
+        printf '%s\tf:%s\0' "${ts%%.*}" "$path" >> "$out_file"
+      done
+  elif [[ "${FILE_SIZE_MODE:-real}" == "apparent" ]]; then
+    "${find_cmd2[@]}" -mindepth 1 -type f -printf '%s\t%p\0' 2>"$err_files" |
+      while IFS=$'\t' read -r -d '' size path; do
+        printf '%s\tf:%s\0' "$size" "$path" >> "$out_file"
+      done
+  else
+    "${find_cmd2[@]}" -mindepth 1 -type f -printf '%b\t%p\0' 2>"$err_files" |
+      while IFS=$'\t' read -r -d '' blocks path; do
+        printf '%s\tf:%s\0' "$(( blocks * 512 ))" "$path" >> "$out_file"
+      done
+  fi || true
+  _find_rc=${PIPESTATUS[0]:-0}
+  update_scan_warning "$err_files" "Analyse fichiers partielle" "$_find_rc"
+  [[ -n "${SCAN_WARNING:-}" && -z "$warn" ]] && warn="$SCAN_WARNING"
+
+  [[ -n "${_TUI_SCAN_WARNING_FILE-}" ]] && printf '%s' "$warn" > "$_TUI_SCAN_WARNING_FILE" || SCAN_WARNING="$warn"
+  rm -f -- "$err_dirs" "$err_files"
 }
 
 show_heavy_subdirs() {
@@ -904,6 +954,7 @@ _tui_stop_background_scan() {
     wait "$_TUI_SCAN_PID" 2>/dev/null || true
   fi
   _TUI_SCAN_PID=0
+  _TUI_LAST_RESULT_BYTES=0
   [[ -f "$_TUI_SCAN_RESULT_FILE" ]] && rm -f "$_TUI_SCAN_RESULT_FILE"
   [[ -f "$_TUI_SCAN_DONE_FILE" ]]   && rm -f "$_TUI_SCAN_DONE_FILE"
   [[ -f "$_TUI_SCAN_WARNING_FILE" ]] && rm -f "$_TUI_SCAN_WARNING_FILE"
@@ -911,65 +962,85 @@ _tui_stop_background_scan() {
 
 _TUI_PRESERVE_PATH=""
 
-_tui_check_scan_completion() {
+# Polling du scan en cours : met à jour SUBDIR_* au fil du streaming,
+# et finalise quand le done-file est non-vide. Retourne 1 si terminé.
+_tui_check_scan_updates() {
   [[ "$_TUI_SCAN_PID" -eq 0 ]] && return 0
-  [[ ! -s "$_TUI_SCAN_DONE_FILE" ]] && return 0
 
-  local line val tagged entry_type full_path
-  SUBDIR_PATHS=()
-  SUBDIR_DATA=()
-  SUBDIR_TYPES=()
-  
-  # Charger les résultats du scan fini
-  while IFS= read -r -d '' line; do
-    val="${line%%$'\t'*}"
-    tagged="${line#*$'\t'}"
-    entry_type="${tagged:0:1}"
-    full_path="${tagged:2}"
-    [[ -z "$full_path" || "$entry_type" != [df] ]] && continue
-    SUBDIR_PATHS+=("$full_path")
-    SUBDIR_DATA+=("$val")
-    SUBDIR_TYPES+=("$entry_type")
-  done < "$_TUI_SCAN_RESULT_FILE"
-  printf "[COMPLETION] dir=%s result_file_bytes=%d entries_loaded=%d\n" \
-    "$CURRENT_DIR" \
-    "$(wc -c < "$_TUI_SCAN_RESULT_FILE" 2>/dev/null || echo -1)" \
-    "${#SUBDIR_PATHS[@]}" >> /tmp/disk-scan-debug.txt
+  local current_bytes scan_done=0
+  current_bytes=$(wc -c < "$_TUI_SCAN_RESULT_FILE" 2>/dev/null || echo 0)
+  [[ -s "$_TUI_SCAN_DONE_FILE" ]] && scan_done=1
 
-  # Charger le warning s'il existe
-  if [[ -f "$_TUI_SCAN_WARNING_FILE" ]]; then
-    LAST_WARNING="$(cat "$_TUI_SCAN_WARNING_FILE")"
+  if (( current_bytes > _TUI_LAST_RESULT_BYTES )) || (( scan_done && current_bytes != _TUI_LAST_RESULT_BYTES )); then
+    _TUI_LAST_RESULT_BYTES=$current_bytes
+
+    # Sauvegarder le chemin sous le curseur pour le restaurer après le tri
+    local _cursor_path=""
+    (( CURSOR < ${#SUBDIR_PATHS[@]} )) && _cursor_path="${SUBDIR_PATHS[$CURSOR]:-}"
+
+    # Lire toutes les entrées disponibles
+    local line val tagged entry_type full_path
+    local -a paths=() data=() types=()
+    while IFS= read -r -d '' line; do
+      val="${line%%$'\t'*}"
+      tagged="${line#*$'\t'}"
+      entry_type="${tagged:0:1}"
+      full_path="${tagged:2}"
+      [[ -z "$full_path" || "$entry_type" != [df] || "$full_path" != /* ]] && continue
+      paths+=("$full_path")
+      data+=("$val")
+      types+=("$entry_type")
+    done < "$_TUI_SCAN_RESULT_FILE"
+
+    # Trier en mémoire et appliquer TOP_COUNT
+    _tui_sort_and_limit paths data types
+
+    SUBDIR_PATHS=("${paths[@]+"${paths[@]}"}")
+    SUBDIR_DATA=("${data[@]+"${data[@]}"}")
+    SUBDIR_TYPES=("${types[@]+"${types[@]}"}")
+
+    # Ajouter ".." en tête
+    if [[ "$CURRENT_DIR" != "/" ]]; then
+      SUBDIR_PATHS=("$(dirname -- "$CURRENT_DIR")" "${SUBDIR_PATHS[@]+"${SUBDIR_PATHS[@]}"}")
+      SUBDIR_DATA=("__dotdot__" "${SUBDIR_DATA[@]+"${SUBDIR_DATA[@]}"}")
+      SUBDIR_TYPES=("d" "${SUBDIR_TYPES[@]+"${SUBDIR_TYPES[@]}"}")
+    fi
+
+    # Restaurer la position du curseur (sur le même chemin après retri)
+    if [[ -n "$_cursor_path" ]]; then
+      local i
+      for (( i=0; i<${#SUBDIR_PATHS[@]}; i++ )); do
+        [[ "${SUBDIR_PATHS[$i]}" == "$_cursor_path" ]] && { CURSOR=$i; break; }
+      done
+    fi
+
+    _NEEDS_REDRAW=1
   fi
 
-  # Ajouter ".."
-  if [[ "$CURRENT_DIR" != "/" ]]; then
-    SUBDIR_PATHS=("$(dirname -- "$CURRENT_DIR")" "${SUBDIR_PATHS[@]+"${SUBDIR_PATHS[@]}"}")
-    SUBDIR_DATA=("__dotdot__" "${SUBDIR_DATA[@]+"${SUBDIR_DATA[@]}"}")
-    SUBDIR_TYPES=("d" "${SUBDIR_TYPES[@]+"${SUBDIR_TYPES[@]}"}")
-  fi
-
-  # Tenter de restaurer le curseur si demandé
-  if [[ -n "$_TUI_PRESERVE_PATH" ]]; then
-    local i
-    for (( i=0; i<${#SUBDIR_PATHS[@]}; i++ )); do
-      if [[ "${SUBDIR_PATHS[$i]}" == "$_TUI_PRESERVE_PATH" ]]; then
-        CURSOR=$i
-        # Ajuster le scroll si nécessaire
-        local visible=$(( LINES - 6 ))
-        (( visible < 1 )) && visible=1
-        if (( CURSOR < SCROLL_OFFSET || CURSOR >= SCROLL_OFFSET + visible )); then
-          SCROLL_OFFSET=$(( CURSOR - (visible / 2) ))
-          (( SCROLL_OFFSET < 0 )) && SCROLL_OFFSET=0
+  if (( scan_done )); then
+    # Restauration finale du curseur demandé par _tui_reload_subdirs
+    if [[ -n "$_TUI_PRESERVE_PATH" ]]; then
+      local i
+      for (( i=0; i<${#SUBDIR_PATHS[@]}; i++ )); do
+        if [[ "${SUBDIR_PATHS[$i]}" == "$_TUI_PRESERVE_PATH" ]]; then
+          CURSOR=$i
+          local visible=$(( LINES - 6 ))
+          (( visible < 1 )) && visible=1
+          if (( CURSOR < SCROLL_OFFSET || CURSOR >= SCROLL_OFFSET + visible )); then
+            SCROLL_OFFSET=$(( CURSOR - (visible / 2) ))
+            (( SCROLL_OFFSET < 0 )) && SCROLL_OFFSET=0
+          fi
+          break
         fi
-        break
-      fi
-    done
-    _TUI_PRESERVE_PATH=""
-  fi
+      done
+      _TUI_PRESERVE_PATH=""
+    fi
 
-  _tui_stop_background_scan
-  _NEEDS_REDRAW=1
-  return 1 # Signale que le scan est fini
+    [[ -f "$_TUI_SCAN_WARNING_FILE" ]] && LAST_WARNING="$(cat "$_TUI_SCAN_WARNING_FILE")"
+    _tui_stop_background_scan
+    return 1
+  fi
+  return 0
 }
 
 
@@ -1006,6 +1077,7 @@ _tui_reload_subdirs() {
 
   # Mode TUI : Asynchrone
   _tui_stop_background_scan
+  _TUI_LAST_RESULT_BYTES=0
   
   _TUI_SCAN_RESULT_FILE=$(make_temp_file) || return 1
   _TUI_SCAN_DONE_FILE=$(make_temp_file)   || return 1
@@ -1098,7 +1170,7 @@ navigate() {
   local key target prev_dir idx
 
   while true; do
-    _tui_check_scan_completion || true
+    _tui_check_scan_updates || true
     [[ "$_NEEDS_REDRAW" -eq 1 ]] && tui_draw
 
     read_key

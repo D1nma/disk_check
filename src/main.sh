@@ -59,7 +59,7 @@ CURRENT_DIR=""
 
 SORT_MODE="size"          # size | mtime
 FILE_SIZE_MODE="real"     # real | apparent
-ANALYSIS_MODE="partition" # partition | global
+ANALYSIS_MODE="global" # partition | global
 RUN_MODE="interactive"    # interactive | summary | report | tree
 SELF_CHECK_ONLY=0
 DEBUG_TUI=0
