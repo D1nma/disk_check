@@ -569,12 +569,10 @@ main() {
   check_runtime_requirements
 
 VERSION="v1.0.1-RESILIENT" # Fixed awk dependency for subdirs
-...
   check_runtime_requirements
 
   # Export critical variables
   export AWK_CMD FIND_CMD SORT_CMD HEAD_CMD DU_CMD NUMFMT_CMD PLATFORM VERSION DEBUG_TUI TEMP_ROOT
-...
   if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
     # Check TTY without redirection to avoid false negatives in log
     local t0 t1
