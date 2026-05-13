@@ -24,7 +24,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="0c9ff64"
+VERSION="8b501aa"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -1424,6 +1424,13 @@ _tui_scan_to_file() {
   LC_ALL=C "$SORT_CMD" -zrn "$out_file" | "$HEAD_CMD" -z -n "$TOP_COUNT" > "$tmp_sorted"
   mv -f -- "$tmp_sorted" "$out_file"
 
+  {
+    printf "[SCAN] dir=%s\n" "$CURRENT_DIR"
+    printf "[SCAN] tmp_dirs_bytes=%d\n" "$(wc -c < "$tmp_dirs" 2>/dev/null || echo -1)"
+    printf "[SCAN] result_bytes=%d\n" "$(wc -c < "$out_file" 2>/dev/null || echo -1)"
+    printf "[SCAN] first_record=%s\n" "$(head -c 80 "$out_file" 2>/dev/null | cat -v)"
+  } >> /tmp/disk-scan-debug.txt
+
   if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
     printf "[DEBUG] final merged size: %d\n" "$(wc -c < "$out_file")" >&2
   fi
@@ -1978,6 +1985,10 @@ _tui_check_scan_completion() {
     SUBDIR_DATA+=("$val")
     SUBDIR_TYPES+=("$entry_type")
   done < "$_TUI_SCAN_RESULT_FILE"
+  printf "[COMPLETION] dir=%s result_file_bytes=%d entries_loaded=%d\n" \
+    "$CURRENT_DIR" \
+    "$(wc -c < "$_TUI_SCAN_RESULT_FILE" 2>/dev/null || echo -1)" \
+    "${#SUBDIR_PATHS[@]}" >> /tmp/disk-scan-debug.txt
 
   # Charger le warning s'il existe
   if [[ -f "$_TUI_SCAN_WARNING_FILE" ]]; then
