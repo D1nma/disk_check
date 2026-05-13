@@ -17,19 +17,14 @@ fi
 
 set -u -o pipefail
 
-# If the script is being piped to bash (curl | bash), we re-execute it via bash -c
-# to decouple it from stdin, allowing us to reconnect stdin to /dev/tty for the TUI.
-if [[ ! -t 0 && -t 1 && -z "${BASH_SOURCE[0]:-}" && -z "${_DISK_EXPLORER_REEXEC:-}" ]]; then
-  export _DISK_EXPLORER_REEXEC=1
-  exec bash -c "$(cat)" bash "$@"
-fi
-
-# Reconnect stdin to TTY if redirected (supports curl | bash or bash < script.sh)
+# Reconnect stdin to TTY if redirected (supports curl | bash or bash < script.sh).
+# exec bash -c "$(cat)" was previously used here but is unreliable: bash buffers
+# ahead so $(cat) receives a truncated script, silently dropping scan functions.
 if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="b26d852"
+VERSION="872e43c"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -1822,6 +1817,7 @@ tui_draw() {
 }
 
 navigate_legacy() {
+  [[ -t 0 ]] || exec < /dev/tty
   while true; do
     show_header
     show_heavy_subdirs
@@ -2123,6 +2119,10 @@ _tui_show_report_result() {
 # ── Boucle principale TUI ─────────────────────────────────────────────────
 
 navigate() {
+  # When piped (e.g. curl | bash), stdin is the pipe, not the terminal.
+  # Reconnect stdin to /dev/tty so stty/read work correctly.
+  [[ -t 0 ]] || exec < /dev/tty
+
   tui_check_capability
   if [[ "$TUI_CAPABLE" -eq 0 ]]; then
     navigate_legacy

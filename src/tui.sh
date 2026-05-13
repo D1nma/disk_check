@@ -785,6 +785,7 @@ tui_draw() {
 }
 
 navigate_legacy() {
+  [[ -t 0 ]] || exec < /dev/tty
   while true; do
     show_header
     show_heavy_subdirs
@@ -1086,6 +1087,10 @@ _tui_show_report_result() {
 # ── Boucle principale TUI ─────────────────────────────────────────────────
 
 navigate() {
+  # When piped (e.g. curl | bash), stdin is the pipe, not the terminal.
+  # Reconnect stdin to /dev/tty so stty/read work correctly.
+  [[ -t 0 ]] || exec < /dev/tty
+
   tui_check_capability
   if [[ "$TUI_CAPABLE" -eq 0 ]]; then
     navigate_legacy
