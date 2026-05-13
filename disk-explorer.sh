@@ -24,7 +24,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="0f75c12"
+VERSION="ddec788"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -1427,7 +1427,7 @@ _tui_scan_to_file() {
   if [[ "${SORT_MODE:-size}" == "mtime" ]]; then
     local -a find_cmd
     build_find_prefix find_cmd 1
-    "${find_cmd[@]}" -mindepth 1 -type d -printf '%T@\t%p\0' 2>"$err_dirs" |
+    "${find_cmd[@]}" -type d -printf '%T@\t%p\0' 2>"$err_dirs" |
       while IFS=$'\t' read -r -d '' ts path; do
         [[ "$path" == "$CURRENT_DIR" ]] && continue
         printf '%s\td:%s\0' "${ts%%.*}" "$path" >> "$out_file"
@@ -1450,17 +1450,17 @@ _tui_scan_to_file() {
   local -a find_cmd2
   build_find_prefix find_cmd2 1
   if [[ "${SORT_MODE:-size}" == "mtime" ]]; then
-    "${find_cmd2[@]}" -mindepth 1 -type f -printf '%T@\t%p\0' 2>"$err_files" |
+    "${find_cmd2[@]}" -type f -printf '%T@\t%p\0' 2>"$err_files" |
       while IFS=$'\t' read -r -d '' ts path; do
         printf '%s\tf:%s\0' "${ts%%.*}" "$path" >> "$out_file"
       done
   elif [[ "${FILE_SIZE_MODE:-real}" == "apparent" ]]; then
-    "${find_cmd2[@]}" -mindepth 1 -type f -printf '%s\t%p\0' 2>"$err_files" |
+    "${find_cmd2[@]}" -type f -printf '%s\t%p\0' 2>"$err_files" |
       while IFS=$'\t' read -r -d '' size path; do
         printf '%s\tf:%s\0' "$size" "$path" >> "$out_file"
       done
   else
-    "${find_cmd2[@]}" -mindepth 1 -type f -printf '%b\t%p\0' 2>"$err_files" |
+    "${find_cmd2[@]}" -type f -printf '%b\t%p\0' 2>"$err_files" |
       while IFS=$'\t' read -r -d '' blocks path; do
         printf '%s\tf:%s\0' "$(( blocks * 512 ))" "$path" >> "$out_file"
       done
