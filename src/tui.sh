@@ -1103,6 +1103,8 @@ _tui_reload_subdirs() {
       set -x
       printf "[DEBUG] BACKGROUND JOB STARTING at %s for %s\n" "$(date)" "$CURRENT_DIR" >&2
       printf "[DEBUG] ENV: DU=%s FIND=%s SORT=%s AWK=%s\n" "$DU_CMD" "$FIND_CMD" "$SORT_CMD" "$AWK_CMD" >&2
+    else
+      exec 2>/dev/null
     fi
     
     ENABLE_SPINNER=0

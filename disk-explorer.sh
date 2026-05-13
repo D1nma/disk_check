@@ -24,7 +24,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="ddec788"
+VERSION="4ebb641"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -2135,6 +2135,8 @@ _tui_reload_subdirs() {
       set -x
       printf "[DEBUG] BACKGROUND JOB STARTING at %s for %s\n" "$(date)" "$CURRENT_DIR" >&2
       printf "[DEBUG] ENV: DU=%s FIND=%s SORT=%s AWK=%s\n" "$DU_CMD" "$FIND_CMD" "$SORT_CMD" "$AWK_CMD" >&2
+    else
+      exec 2>/dev/null
     fi
     
     ENABLE_SPINNER=0
