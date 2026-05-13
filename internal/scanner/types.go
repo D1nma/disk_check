@@ -9,7 +9,7 @@ type Entry struct {
 	ModTime time.Time
 }
 
-type ScanResult struct {
-	Entries []Entry
-	Error   error
+type ScanOptions struct {
+	SameDevice bool     // like du -x: stay on same filesystem
+	Excludes   []string // absolute paths to skip
 }

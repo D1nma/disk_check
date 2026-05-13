@@ -7,89 +7,91 @@ import (
 	"testing"
 )
 
-func TestScan(t *testing.T) {
-	// Create a temporary directory structure for testing
-	tmpDir, err := os.MkdirTemp("", "scanner_test")
+func TestScan_DepthOne(t *testing.T) {
+	tmp, err := os.MkdirTemp("", "scanner_test")
 	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
+		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer os.RemoveAll(tmp)
 
-	// Create some files and directories
-	dir1 := filepath.Join(tmpDir, "dir1")
+	// tmp/
+	//   dir1/
+	//     file2.txt  ("world")
+	//   file1.txt    ("hello")
+	dir1 := filepath.Join(tmp, "dir1")
 	if err := os.Mkdir(dir1, 0755); err != nil {
-		t.Fatalf("Failed to create dir1: %v", err)
+		t.Fatal(err)
 	}
-	file1 := filepath.Join(tmpDir, "file1.txt")
-	if err := os.WriteFile(file1, []byte("hello"), 0644); err != nil {
-		t.Fatalf("Failed to create file1: %v", err)
+	if err := os.WriteFile(filepath.Join(tmp, "file1.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
 	}
-	file2 := filepath.Join(dir1, "file2.txt")
-	if err := os.WriteFile(file2, []byte("world"), 0644); err != nil {
-		t.Fatalf("Failed to create file2: %v", err)
+	if err := os.WriteFile(filepath.Join(dir1, "file2.txt"), []byte("world"), 0644); err != nil {
+		t.Fatal(err)
 	}
 
 	ctx := context.Background()
-	results := Scan(ctx, tmpDir, 2)
-
-	var allEntries []Entry
-	for entry := range results {
-		allEntries = append(allEntries, entry)
+	var entries []Entry
+	for e := range Scan(ctx, tmp, ScanOptions{}) {
+		entries = append(entries, e)
 	}
 
-	// We expect 3 entries: dir1, file1.txt, and file2.txt
-	expectedCount := 3
-	if len(allEntries) != expectedCount {
-		t.Errorf("Expected %d entries, got %d", expectedCount, len(allEntries))
+	// Depth-1: only dir1 and file1.txt (file2.txt is nested, not a direct child).
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 depth-1 entries, got %d: %v", len(entries), entries)
 	}
 
-	// Check if file2.txt is in the results
-	found := false
-	for _, e := range allEntries {
-		if filepath.Base(e.Path) == "file2.txt" {
-			found = true
-			if e.Size != 5 {
-				t.Errorf("Expected size 5 for file2.txt, got %d", e.Size)
-			}
-			break
-		}
+	byName := make(map[string]Entry)
+	for _, e := range entries {
+		byName[filepath.Base(e.Path)] = e
 	}
-	if !found {
-		t.Errorf("file2.txt not found in scan results")
+
+	if _, ok := byName["dir1"]; !ok {
+		t.Error("dir1 not found in results")
+	}
+	if e, ok := byName["dir1"]; ok && !e.IsDir {
+		t.Error("dir1 should be IsDir=true")
+	}
+	// dir1 cumulative size must include file2.txt (> 0 bytes)
+	if e, ok := byName["dir1"]; ok && e.Size <= 0 {
+		t.Errorf("dir1 cumulative size should be > 0, got %d", e.Size)
+	}
+	if _, ok := byName["file1.txt"]; !ok {
+		t.Error("file1.txt not found in results")
+	}
+	if e, ok := byName["file1.txt"]; ok && e.IsDir {
+		t.Error("file1.txt should be IsDir=false")
+	}
+
+	// file2.txt must NOT appear at the top level
+	if _, ok := byName["file2.txt"]; ok {
+		t.Error("file2.txt must not appear as a depth-1 entry (it is nested)")
 	}
 }
 
-func TestScanContextCancellation(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "scanner_cancel_test")
+func TestScan_ContextCancellation(t *testing.T) {
+	tmp, err := os.MkdirTemp("", "scanner_cancel_test")
 	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
+		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer os.RemoveAll(tmp)
 
-	// Create a larger structure to ensure we have time to cancel
-	for i := 0; i < 10; i++ {
-		dir := filepath.Join(tmpDir, "dir"+filepath.Join(string(rune('a'+i))))
+	for i := 0; i < 8; i++ {
+		dir := filepath.Join(tmp, string(rune('a'+i)))
 		os.MkdirAll(dir, 0755)
 		for j := 0; j < 10; j++ {
-			file := filepath.Join(dir, "file"+filepath.Join(string(rune('a'+j))))
-			os.WriteFile(file, []byte("test"), 0644)
+			os.WriteFile(filepath.Join(dir, string(rune('a'+j))), []byte("x"), 0644)
 		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	// Cancel immediately or very soon
-	cancel()
-
-	results := Scan(ctx, tmpDir, 2)
+	cancel() // cancel before scan starts
 
 	count := 0
-	for range results {
+	for range Scan(ctx, tmp, ScanOptions{}) {
 		count++
 	}
-
-	// Since we cancelled immediately, we expect very few or zero results
-	// The exact number depends on race conditions but it should definitely be less than 110
-	if count >= 110 {
-		t.Errorf("Expected scan to be cancelled, but got %d entries", count)
+	// Should be well under the full 8 entries
+	if count >= 8 {
+		t.Errorf("expected scan to be mostly cancelled, got %d entries", count)
 	}
 }
