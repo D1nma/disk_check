@@ -352,40 +352,19 @@ _TUI_SCAN_WARNING_FILE=""
 # Scanne et écrit dans un fichier temporaire (NUL-délimité, "valeur\ttype:chemin").
 _tui_scan_to_file() {
   local out_file="$1"
-  local tmp_dirs err_dirs tmp_files err_files _rc
-  {
-    printf "[SCAN-ENTER] dir=%s TEMP_ROOT=%s TEMP_ROOT_exists=%s\n" \
-      "$CURRENT_DIR" "${TEMP_ROOT:-UNSET}" "$( [[ -d "${TEMP_ROOT:-}" ]] && echo yes || echo no )"
-  } >> /tmp/disk-scan-debug.txt 2>&1
-  printf "[PRE-A]\n" >> /tmp/disk-scan-debug.txt 2>&1
-  tmp_dirs=$(make_temp_file 2>&1); _rc=$?
-  printf "[POST-A] rc=%d path=%s\n" "$_rc" "$tmp_dirs" >> /tmp/disk-scan-debug.txt 2>&1
-  (( _rc == 0 )) || return 1
-  err_dirs=$(make_temp_file 2>&1); _rc=$?
-  printf "[POST-B] rc=%d path=%s\n" "$_rc" "$err_dirs" >> /tmp/disk-scan-debug.txt 2>&1
-  (( _rc == 0 )) || return 1
-  tmp_files=$(make_temp_file 2>&1); _rc=$?
-  printf "[POST-C] rc=%d path=%s\n" "$_rc" "$tmp_files" >> /tmp/disk-scan-debug.txt 2>&1
-  (( _rc == 0 )) || return 1
-  err_files=$(make_temp_file 2>&1); _rc=$?
-  printf "[POST-D] rc=%d path=%s\n" "$_rc" "$err_files" >> /tmp/disk-scan-debug.txt 2>&1
-  (( _rc == 0 )) || return 1
+  local tmp_dirs err_dirs tmp_files err_files
 
-  if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
-    printf "[DEBUG] Starting _tui_scan_to_file at %s\n" "$(date)" >&2
-    printf "[DEBUG] out_file: %s\n" "$out_file" >&2
-  fi
+  tmp_dirs=$(make_temp_file)  || return 1
+  err_dirs=$(make_temp_file)  || return 1
+  tmp_files=$(make_temp_file) || return 1
+  err_files=$(make_temp_file) || return 1
 
-  printf "[CP1] before scan_subdirs\n" >> /tmp/disk-scan-debug.txt
   scan_subdirs_to_file "$tmp_dirs" "$err_dirs"
   local sub_rc=$?
   local warn="$SCAN_WARNING"
-  printf "[CP2] after scan_subdirs rc=%d tmp_dirs_bytes=%d\n" "$sub_rc" "$(wc -c < "$tmp_dirs" 2>/dev/null || echo -1)" >> /tmp/disk-scan-debug.txt
 
   _tui_scan_shallow_files "$tmp_files" "$err_files"
-  local file_rc=$?
   [[ -n "$SCAN_WARNING" && -z "$warn" ]] && warn="$SCAN_WARNING"
-  printf "[CP3] after shallow_files rc=%d tmp_files_bytes=%d\n" "$file_rc" "$(wc -c < "$tmp_files" 2>/dev/null || echo -1)" >> /tmp/disk-scan-debug.txt
 
   # Fusion résiliente sans awk -v RS='\0'
   : > "$out_file"
@@ -393,32 +372,16 @@ _tui_scan_to_file() {
     [[ "$path" == "$CURRENT_DIR" ]] && continue
     printf '%s\td:%s\0' "$val" "$path" >> "$out_file"
   done < "$tmp_dirs"
-  printf "[CP4] after dirs loop out_bytes=%d\n" "$(wc -c < "$out_file" 2>/dev/null || echo -1)" >> /tmp/disk-scan-debug.txt
   while IFS=$'\t' read -r -d '' val path; do
     printf '%s\tf:%s\0' "$val" "$path" >> "$out_file"
   done < "$tmp_files"
-  printf "[CP5] after files loop out_bytes=%d\n" "$(wc -c < "$out_file" 2>/dev/null || echo -1)" >> /tmp/disk-scan-debug.txt
 
   # Tri final
-  local tmp_sorted; tmp_sorted=$(make_temp_file) || { printf "[CP6-FAIL] make_temp_file for tmp_sorted failed\n" >> /tmp/disk-scan-debug.txt; return 1; }
-  printf "[CP6] tmp_sorted=%s\n" "$tmp_sorted" >> /tmp/disk-scan-debug.txt
+  local tmp_sorted
+  tmp_sorted=$(make_temp_file) || return 1
   LC_ALL=C "$SORT_CMD" -zrn "$out_file" | "$HEAD_CMD" -z -n "$TOP_COUNT" > "$tmp_sorted"
-  printf "[CP7] after sort rc=%d sorted_bytes=%d\n" "$?" "$(wc -c < "$tmp_sorted" 2>/dev/null || echo -1)" >> /tmp/disk-scan-debug.txt
   mv -f -- "$tmp_sorted" "$out_file"
-  printf "[CP8] after mv\n" >> /tmp/disk-scan-debug.txt
 
-  {
-    printf "[SCAN] dir=%s\n" "$CURRENT_DIR"
-    printf "[SCAN] tmp_dirs_bytes=%d\n" "$(wc -c < "$tmp_dirs" 2>/dev/null || echo -1)"
-    printf "[SCAN] result_bytes=%d\n" "$(wc -c < "$out_file" 2>/dev/null || echo -1)"
-    printf "[SCAN] first_record=%s\n" "$(head -c 80 "$out_file" 2>/dev/null | cat -v)"
-  } >> /tmp/disk-scan-debug.txt
-
-  if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
-    printf "[DEBUG] final merged size: %d\n" "$(wc -c < "$out_file")" >&2
-  fi
-
-  # On sauve le warning dans un fichier si précisé, sinon variable globale
   if [[ -n "${_TUI_SCAN_WARNING_FILE-}" ]]; then
     echo -n "$warn" > "$_TUI_SCAN_WARNING_FILE"
   else
@@ -950,7 +913,7 @@ _TUI_PRESERVE_PATH=""
 
 _tui_check_scan_completion() {
   [[ "$_TUI_SCAN_PID" -eq 0 ]] && return 0
-  [[ ! -f "$_TUI_SCAN_DONE_FILE" ]] && return 0
+  [[ ! -s "$_TUI_SCAN_DONE_FILE" ]] && return 0
 
   local line val tagged entry_type full_path
   SUBDIR_PATHS=()
@@ -1061,7 +1024,6 @@ _tui_reload_subdirs() {
   export DU_CMD FIND_CMD SORT_CMD HEAD_CMD AWK_CMD DEBUG_TUI TEMP_ROOT
 
   (
-    trap 'printf "[SUBSHELL-EXIT] rc=%d line=%s\n" "$?" "${LINENO:-?}" >> /tmp/disk-scan-debug.txt 2>&1' EXIT
     # Désactiver set -u dans le subshell pour éviter les plantages sur variables vides
     set +u
     if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
@@ -1075,7 +1037,7 @@ _tui_reload_subdirs() {
     _tui_scan_to_file "$_TUI_SCAN_RESULT_FILE"
     local res=$?
     
-    touch "$_TUI_SCAN_DONE_FILE"
+    printf 'done\n' > "$_TUI_SCAN_DONE_FILE"
     
     if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
       printf "[DEBUG] BACKGROUND JOB FINISHED at %s with rc %d\n" "$(date)" "$res" >&2
