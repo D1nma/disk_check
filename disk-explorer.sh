@@ -24,7 +24,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="e8054f4"
+VERSION="53410ac"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -1399,19 +1399,16 @@ _tui_scan_to_file() {
     printf "[DEBUG] out_file: %s\n" "$out_file" >&2
   fi
 
+  printf "[CP1] before scan_subdirs\n" >> /tmp/disk-scan-debug.txt
   scan_subdirs_to_file "$tmp_dirs" "$err_dirs"
   local sub_rc=$?
   local warn="$SCAN_WARNING"
+  printf "[CP2] after scan_subdirs rc=%d tmp_dirs_bytes=%d\n" "$sub_rc" "$(wc -c < "$tmp_dirs" 2>/dev/null || echo -1)" >> /tmp/disk-scan-debug.txt
 
   _tui_scan_shallow_files "$tmp_files" "$err_files"
   local file_rc=$?
   [[ -n "$SCAN_WARNING" && -z "$warn" ]] && warn="$SCAN_WARNING"
-
-  if [[ "${DEBUG_TUI:-0}" -eq 1 ]]; then
-    printf "[DEBUG] _tui_scan_shallow_files rc: %d\n" "$file_rc" >&2
-    printf "[DEBUG] _tui_scan_shallow_files stdout size: %d\n" "$(wc -c < "$tmp_files")" >&2
-    printf "[DEBUG] _tui_scan_shallow_files stderr: %s\n" "$(cat "$err_files")" >&2
-  fi
+  printf "[CP3] after shallow_files rc=%d tmp_files_bytes=%d\n" "$file_rc" "$(wc -c < "$tmp_files" 2>/dev/null || echo -1)" >> /tmp/disk-scan-debug.txt
 
   # Fusion résiliente sans awk -v RS='\0'
   : > "$out_file"
@@ -1419,14 +1416,19 @@ _tui_scan_to_file() {
     [[ "$path" == "$CURRENT_DIR" ]] && continue
     printf '%s\td:%s\0' "$val" "$path" >> "$out_file"
   done < "$tmp_dirs"
+  printf "[CP4] after dirs loop out_bytes=%d\n" "$(wc -c < "$out_file" 2>/dev/null || echo -1)" >> /tmp/disk-scan-debug.txt
   while IFS=$'\t' read -r -d '' val path; do
     printf '%s\tf:%s\0' "$val" "$path" >> "$out_file"
   done < "$tmp_files"
+  printf "[CP5] after files loop out_bytes=%d\n" "$(wc -c < "$out_file" 2>/dev/null || echo -1)" >> /tmp/disk-scan-debug.txt
 
   # Tri final
-  local tmp_sorted; tmp_sorted=$(make_temp_file)
+  local tmp_sorted; tmp_sorted=$(make_temp_file) || { printf "[CP6-FAIL] make_temp_file for tmp_sorted failed\n" >> /tmp/disk-scan-debug.txt; return 1; }
+  printf "[CP6] tmp_sorted=%s\n" "$tmp_sorted" >> /tmp/disk-scan-debug.txt
   LC_ALL=C "$SORT_CMD" -zrn "$out_file" | "$HEAD_CMD" -z -n "$TOP_COUNT" > "$tmp_sorted"
+  printf "[CP7] after sort rc=%d sorted_bytes=%d\n" "$?" "$(wc -c < "$tmp_sorted" 2>/dev/null || echo -1)" >> /tmp/disk-scan-debug.txt
   mv -f -- "$tmp_sorted" "$out_file"
+  printf "[CP8] after mv\n" >> /tmp/disk-scan-debug.txt
 
   {
     printf "[SCAN] dir=%s\n" "$CURRENT_DIR"
