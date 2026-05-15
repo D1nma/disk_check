@@ -19,7 +19,7 @@ func ScanTopFiles(ctx context.Context, root string, n int, opts ScanOptions) []*
 	var rootDev uint64
 	if opts.SameDevice {
 		if st, ok := rootInfo.Sys().(*syscall.Stat_t); ok {
-			rootDev = st.Dev
+			rootDev = uint64(st.Dev)
 		}
 	}
 
@@ -38,7 +38,7 @@ func ScanTopFiles(ctx context.Context, root string, n int, opts ScanOptions) []*
 			return nil
 		}
 		if opts.SameDevice && rootDev != 0 {
-			if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Dev != rootDev {
+			if st, ok := info.Sys().(*syscall.Stat_t); ok && uint64(st.Dev) != rootDev {
 				return nil
 			}
 		}

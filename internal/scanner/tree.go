@@ -16,7 +16,7 @@ func ScanTree(ctx context.Context, root string, maxDepth int, opts ScanOptions) 
 	var rootDev uint64
 	if opts.SameDevice {
 		if st, ok := rootInfo.Sys().(*syscall.Stat_t); ok {
-			rootDev = st.Dev
+			rootDev = uint64(st.Dev)
 		}
 	}
 	node := buildTreeNode(ctx, root, 0, maxDepth, rootDev, opts)
@@ -54,7 +54,7 @@ func buildTreeNode(ctx context.Context, path string, depth, maxDepth int, rootDe
 			continue
 		}
 		if opts.SameDevice && rootDev != 0 {
-			if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Dev != rootDev {
+			if st, ok := info.Sys().(*syscall.Stat_t); ok && uint64(st.Dev) != rootDev {
 				continue
 			}
 		}

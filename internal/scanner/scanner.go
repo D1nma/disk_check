@@ -25,7 +25,7 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 		var rootDev uint64
 		if opts.SameDevice {
 			if st, ok := rootInfo.Sys().(*syscall.Stat_t); ok {
-				rootDev = st.Dev
+				rootDev = uint64(st.Dev)
 			}
 		}
 
@@ -98,7 +98,7 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 				}
 
 				if opts.SameDevice && rootDev != 0 {
-					if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Dev != rootDev {
+					if st, ok := info.Sys().(*syscall.Stat_t); ok && uint64(st.Dev) != rootDev {
 						continue
 					}
 				}
@@ -208,7 +208,7 @@ func sumDir(ctx context.Context, root string, rootDev uint64, opts ScanOptions) 
 		}
 		if opts.SameDevice && rootDev != 0 {
 			if info, err := d.Info(); err == nil {
-				if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Dev != rootDev {
+				if st, ok := info.Sys().(*syscall.Stat_t); ok && uint64(st.Dev) != rootDev {
 					if d.IsDir() {
 						return filepath.SkipDir
 					}
