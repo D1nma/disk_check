@@ -12,7 +12,7 @@ The project is structured as a Go application that is distributed via a Bash wra
 
 1.  **Go Application**:
     *   **`cmd/disk-explorer/main.go`**: Entry point. Orchestrates the scanner and TUI.
-    *   **`internal/scanner`**: Parallel, cancellable directory scanner. Implements "Lazy Scanning" (scanning only the current view's directory).
+    *   **`internal/scanner`**: Parallel, cancellable directory scanner. Implements a full-scan model (scans the entire tree at startup for instant navigation).
     *   **`internal/tui`**: Interactive interface built with **Bubble Tea** and **Lip Gloss**. Supports real-time updates and dynamic sorting.
     *   **`internal/remote`**: Native SSH orchestration using `golang.org/x/crypto/ssh`.
     *   **`internal/assets`**: Contains the embedded original Bash script.
@@ -49,7 +49,7 @@ The project is structured as a Go application that is distributed via a Bash wra
 ### Go
 *   **Concurrency**: Use `context.Context` for cancelling scans when navigating.
 *   **TUI**: Follow the Bubble Tea Model-Update-View pattern.
-*   **Streaming**: Use channels to stream `Entry` objects from the scanner to the TUI.
+*   **Streaming**: Use channels to stream `ScanProgress` objects from the scanner to the TUI during the scanning phase.
 
 ### Bash (Fallback Logic)
 *   **Modular**: Edits should be made in `src/*.sh`, then run `./build.sh`.
