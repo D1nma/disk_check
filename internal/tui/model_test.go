@@ -7,7 +7,7 @@ import (
 
 func TestModelSortEntriesBySize(t *testing.T) {
 	m := Model{
-		Entries: []scanner.Entry{
+		Entries: []*scanner.Node{
 			{Path: "small", Size: 100},
 			{Path: "large", Size: 1000},
 			{Path: "medium", Size: 500},
@@ -26,7 +26,7 @@ func TestModelSortEntriesBySize(t *testing.T) {
 
 func TestModelSortEntriesByName(t *testing.T) {
 	m := Model{
-		Entries: []scanner.Entry{
+		Entries: []*scanner.Node{
 			{Path: "b", Size: 100},
 			{Path: "a", Size: 1000},
 			{Path: "c", Size: 500},
@@ -45,7 +45,7 @@ func TestModelSortEntriesByName(t *testing.T) {
 
 func TestModelSortEntriesByReverseSize(t *testing.T) {
 	m := Model{
-		Entries: []scanner.Entry{
+		Entries: []*scanner.Node{
 			{Path: "small", Size: 100},
 			{Path: "large", Size: 1000},
 			{Path: "medium", Size: 500},

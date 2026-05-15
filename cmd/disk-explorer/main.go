@@ -113,15 +113,19 @@ func getDiskInfo(path string) display.DiskInfo {
 	}
 }
 
-func collectEntries(path string, opts scanner.ScanOptions) []scanner.Entry {
-	var entries []scanner.Entry
-	for e := range scanner.Scan(context.Background(), path, opts) {
-		entries = append(entries, e)
+func collectEntries(path string, opts scanner.ScanOptions) []*scanner.Node {
+	ch := scanner.Scan(context.Background(), path, opts)
+	var lastProgress scanner.ScanProgress
+	for p := range ch {
+		lastProgress = p
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Size > entries[j].Size
-	})
-	return entries
+	if lastProgress.Root != nil {
+		sort.Slice(lastProgress.Root.Children, func(i, j int) bool {
+			return lastProgress.Root.Children[i].Size > lastProgress.Root.Children[j].Size
+		})
+		return lastProgress.Root.Children
+	}
+	return nil
 }
 
 func writeSummary(w io.Writer, path string, opts scanner.ScanOptions, topN int) {
@@ -190,10 +194,9 @@ func runTUI(path string, opts scanner.ScanOptions) {
 	m := tui.Model{
 		Path:        path,
 		Version:     version,
-		Entries:     []scanner.Entry{},
+		State:       tui.StateScanning,
 		ScannerChan: ch,
 		UpdateChan:  updateCh,
-		Scanning:    true,
 		CancelScan:  cancel,
 		ScanOpts:    opts,
 	}

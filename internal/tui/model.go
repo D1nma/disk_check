@@ -36,12 +36,10 @@ var (
 // ── Messages ─────────────────────────────────────────────────────────────────
 
 // generation is embedded in scan messages to discard stale results after navigation.
-type entryMsg struct {
-	gen   int
-	entry scanner.Entry
+type progressMsg struct {
+	gen      int
+	progress scanner.ScanProgress
 }
-
-type scanDoneMsg struct{ gen int }
 
 type diskInfoMsg struct {
 	Total int64
@@ -53,22 +51,33 @@ type updateAvailableMsg struct{ tag string }
 
 // ── Model ────────────────────────────────────────────────────────────────────
 
+type State int
+
+const (
+	StateScanning State = iota
+	StateBrowsing
+)
+
 type Model struct {
 	Path        string
 	Version     string
-	Entries     []scanner.Entry
+	State       State
+	Root        *scanner.Node
+	Current     *scanner.Node
+	Entries     []*scanner.Node
 	Selected    int
 	Offset      int // scroll offset
 	Width       int
 	Height      int
-	Scanning    bool
-	ScannerChan <-chan scanner.Entry
+	ScannerChan <-chan scanner.ScanProgress
 	UpdateChan  <-chan string
 	CancelScan  context.CancelFunc
 	History     []string
 	SortBy      SortKey
 	SortReverse bool
 	ScanOpts    scanner.ScanOptions
+
+	Progress scanner.ScanProgress
 
 	// disk usage header
 	diskTotal int64
@@ -85,7 +94,7 @@ type Model struct {
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{fetchDiskInfo(m.Path)}
 	if m.ScannerChan != nil {
-		cmds = append(cmds, listenForEntry(m.ScannerChan, m.generation))
+		cmds = append(cmds, listenForProgress(m.ScannerChan, m.generation))
 	}
 	if m.UpdateChan != nil {
 		cmds = append(cmds, listenForUpdate(m.UpdateChan))
@@ -104,20 +113,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.diskUsed = msg.Used
 		m.diskAvail = msg.Avail
 
-	case entryMsg:
+	case progressMsg:
 		if msg.gen != m.generation {
 			break // stale — discard
 		}
-		m.Entries = append(m.Entries, msg.entry)
-		m.sortEntries()
-		return m, listenForEntry(m.ScannerChan, m.generation)
+		m.Progress = msg.progress
 
-	case scanDoneMsg:
-		if msg.gen != m.generation {
-			break // stale
+		if msg.progress.Done {
+			m.State = StateBrowsing
+			m.Root = msg.progress.Root
+			m.Current = msg.progress.Root
+			m.Entries = m.Current.Children
+			m.sortEntries()
+			return m, nil
 		}
-		m.Scanning = false
-		m.ScannerChan = nil
+		return m, listenForProgress(m.ScannerChan, m.generation)
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -128,17 +138,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "up", "k":
+			if m.State == StateScanning {
+				break
+			}
 			if m.Selected > 0 {
 				m.Selected--
 				m.clampScroll()
 			}
 		case "down", "j":
+			if m.State == StateScanning {
+				break
+			}
 			if m.Selected < len(m.Entries)-1 {
 				m.Selected++
 				m.clampScroll()
 			}
 
 		case "s":
+			if m.State == StateScanning {
+				break
+			}
 			if m.SortBy == SortSize {
 				m.SortReverse = !m.SortReverse
 			} else {
@@ -147,6 +166,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.sortEntries()
 		case "n":
+			if m.State == StateScanning {
+				break
+			}
 			if m.SortBy == SortName {
 				m.SortReverse = !m.SortReverse
 			} else {
@@ -155,6 +177,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.sortEntries()
 		case "t":
+			if m.State == StateScanning {
+				break
+			}
 			if m.SortBy == SortDate {
 				m.SortReverse = !m.SortReverse
 			} else {
@@ -164,12 +189,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sortEntries()
 
 		case "enter":
+			if m.State == StateScanning {
+				break
+			}
 			if len(m.Entries) > 0 && m.Entries[m.Selected].IsDir {
 				m.History = append(m.History, m.Path)
 				return m.navigateTo(m.Entries[m.Selected].Path)
 			}
 
 		case "backspace", "left", "h":
+			if m.State == StateScanning {
+				break
+			}
 			if len(m.History) > 0 {
 				prev := m.History[len(m.History)-1]
 				m.History = m.History[:len(m.History)-1]
@@ -232,12 +263,13 @@ func (m Model) navigateTo(newPath string) (tea.Model, tea.Cmd) {
 	m.Entries = nil
 	m.Selected = 0
 	m.Offset = 0
-	m.Scanning = true
+	m.State = StateScanning
+	m.Progress = scanner.ScanProgress{}
 	ch := scanner.Scan(ctx, newPath, m.ScanOpts)
 	m.ScannerChan = ch
 	return m, tea.Batch(
 		fetchDiskInfo(newPath),
-		listenForEntry(ch, m.generation),
+		listenForProgress(ch, m.generation),
 	)
 }
 
@@ -253,13 +285,13 @@ func listenForUpdate(ch <-chan string) tea.Cmd {
 	}
 }
 
-func listenForEntry(ch <-chan scanner.Entry, gen int) tea.Cmd {
+func listenForProgress(ch <-chan scanner.ScanProgress, gen int) tea.Cmd {
 	return func() tea.Msg {
-		e, ok := <-ch
+		p, ok := <-ch
 		if !ok {
-			return scanDoneMsg{gen: gen}
+			return nil
 		}
-		return entryMsg{gen: gen, entry: e}
+		return progressMsg{gen: gen, progress: p}
 	}
 }
 
@@ -291,7 +323,7 @@ func (m Model) View() string {
 
 	// Line 1: title
 	scanMark := ""
-	if m.Scanning {
+	if m.State == StateScanning {
 		scanMark = " ⠋"
 	}
 	sortLabel := map[SortKey]string{SortSize: "size", SortName: "name", SortDate: "date"}[m.SortBy]
@@ -325,49 +357,66 @@ func (m Model) View() string {
 
 	b.WriteString(sep + "\n")
 
-	// Entry list
-	visible := m.listHeight()
-	var maxSize int64
-	for _, e := range m.Entries {
-		if e.Size > maxSize {
-			maxSize = e.Size
+	if m.State == StateScanning {
+		// Progress Screen
+		b.WriteString("\n\n")
+		b.WriteString(fmt.Sprintf("  Analyse en cours : %s\n\n", m.Path))
+		b.WriteString(fmt.Sprintf("  Fichiers : %d\n", m.Progress.Files))
+		b.WriteString(fmt.Sprintf("  Dossiers : %d\n", m.Progress.Dirs))
+		b.WriteString(fmt.Sprintf("  Taille   : %s\n\n", formatSize(m.Progress.Size)))
+		if m.Progress.Current != "" {
+			curr := m.Progress.Current
+			if len(curr) > w-10 {
+				curr = "..." + curr[len(curr)-(w-13):]
+			}
+			b.WriteString(dimStyle.Render(fmt.Sprintf("  En cours : %s", curr)) + "\n")
 		}
-	}
 
-	if len(m.Entries) == 0 {
-		if m.Scanning {
-			b.WriteString(dimStyle.Render("  Analyse en cours...") + "\n")
-		} else {
+		// Pad remaining lines
+		for i := 0; i < m.listHeight()-7; i++ {
+			b.WriteString("\n")
+		}
+	} else {
+		// Entry list
+		visible := m.listHeight()
+		var maxSize int64
+		for _, e := range m.Entries {
+			if e.Size > maxSize {
+				maxSize = e.Size
+			}
+		}
+
+		if len(m.Entries) == 0 {
 			b.WriteString(dimStyle.Render("  (vide)") + "\n")
 		}
-	}
 
-	for i := m.Offset; i < len(m.Entries) && i < m.Offset+visible; i++ {
-		e := m.Entries[i]
-		cursor := "  "
-		if i == m.Selected {
-			cursor = "> "
+		for i := m.Offset; i < len(m.Entries) && i < m.Offset+visible; i++ {
+			e := m.Entries[i]
+			cursor := "  "
+			if i == m.Selected {
+				cursor = "> "
+			}
+			bar := cyanStyle.Render(renderBar(e.Size, maxSize, 10))
+			name := filepath.Base(e.Path)
+			if e.IsDir {
+				name += "/"
+			}
+			line := fmt.Sprintf("%s%10s  %s  %s", cursor, formatSize(e.Size), bar, name)
+			if i == m.Selected {
+				b.WriteString(selectedStyle.Render(line) + "\n")
+			} else {
+				b.WriteString(line + "\n")
+			}
 		}
-		bar := cyanStyle.Render(renderBar(e.Size, maxSize, 10))
-		name := filepath.Base(e.Path)
-		if e.IsDir {
-			name += "/"
-		}
-		line := fmt.Sprintf("%s%10s  %s  %s", cursor, formatSize(e.Size), bar, name)
-		if i == m.Selected {
-			b.WriteString(selectedStyle.Render(line) + "\n")
-		} else {
-			b.WriteString(line + "\n")
-		}
-	}
 
-	// Pad remaining lines so footer stays at the bottom
-	rendered := m.Offset + visible
-	if rendered > len(m.Entries) {
-		rendered = len(m.Entries)
-	}
-	for i := rendered - m.Offset; i < visible; i++ {
-		b.WriteString("\n")
+		// Pad remaining lines so footer stays at the bottom
+		rendered := m.Offset + visible
+		if rendered > len(m.Entries) {
+			rendered = len(m.Entries)
+		}
+		for i := rendered - m.Offset; i < visible; i++ {
+			b.WriteString("\n")
+		}
 	}
 
 	b.WriteString(sep + "\n")
