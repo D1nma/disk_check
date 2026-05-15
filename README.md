@@ -23,8 +23,8 @@ DISK EXPLORER  /home/user  ALL · size ↓  ⠋
 
 ## Features
 
-- **Real-time TUI** — built with [Bubble Tea](https://github.com/charmbracelet/bubbletea); entries stream live as directories are sized
-- **Lazy scanning** — depth-1 scan with parallel goroutines for cumulative directory sizes; navigating into a subdirectory triggers a fresh scan
+- **Real-time TUI** — built with [Bubble Tea](https://github.com/charmbracelet/bubbletea); shows a detailed progress screen during scanning and then switches to an instant browsing view
+- **Full scanning** — high-performance parallel scan at startup builds a complete in-memory tree for zero-latency navigation (O(1))
 - **Non-interactive modes** — `--summary`, `--report`, `--tree` for scripting and CI pipelines
 - **Auto-update** — checks for new releases at startup; `--update` upgrades to the latest binary
 - **SHA256 verification** — all downloaded binaries are verified against the release `SHA256SUMS` file
@@ -69,8 +69,8 @@ disk-explorer --mode partition /
 | Key | Action |
 |-----|--------|
 | `↑` `↓` / `k` `j` | Navigate the list |
-| `Enter` | Open directory (triggers fresh scan) |
-| `Backspace` / `←` / `h` | Go to parent directory |
+| `Enter` | Open directory (instant, no re-scan) |
+| `Backspace` / `←` / `h` | Go to parent directory (instant, no re-scan) |
 | `s` | Sort by size (press again to reverse) |
 | `n` | Sort by name (press again to reverse) |
 | `t` | Sort by modification date (press again to reverse) |

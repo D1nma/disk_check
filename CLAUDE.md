@@ -68,8 +68,8 @@ bats tests/is_integer.bats --filter "is_integer: zero"
 | Package | Role |
 |---------|------|
 | `cmd/disk-explorer` | Entry point: flag parsing, mode dispatch (TUI / summary / report / tree / update) |
-| `internal/tui` | Bubble Tea model; streams entries from `scanner.Scan`; handles keyboard navigation, sort, history |
-| `internal/scanner` | `Scan()` — depth-1 children with parallel cumulative dir sizes; `ScanTree()` — recursive tree up to maxDepth; `ScanTopFiles()` — top N files by disk usage |
+| `internal/tui` | Bubble Tea model; handles keyboard navigation (O(1)) and state transitions between scanning and browsing |
+| `internal/scanner` | `Scan()` — parallel recursive scan that builds a complete `Node` tree; `ScanTree()` — recursive tree up to maxDepth; `ScanTopFiles()` — top N files by disk usage |
 | `internal/display` | Non-interactive output: `Summary()`, `Tree()`, `FormatSize()` |
 | `internal/updater` | `LatestRelease()` — GitHub API; `UpdateAvailable()` — compare versions; `SelfUpdate()` — download + SHA256 verify + atomic rename |
 | `internal/remote` | Native Go SSH client (`golang.org/x/crypto/ssh`) for remote host scanning |
@@ -88,9 +88,11 @@ bats tests/is_integer.bats --filter "is_integer: zero"
 
 ### Key Go design decisions
 
-**Depth-1 scanner with parallel goroutines.** `scanner.Scan()` lists only direct children. Files emit immediately; each directory spawns a goroutine that calls `sumDir()` (recursive `filepath.WalkDir`) and emits once complete. A semaphore of 4 limits concurrency. This makes the TUI feel responsive: files appear instantly and directories fill in as they finish.
+**Parallel recursive scanner with post-scan aggregation.** `scanner.Scan()` performs a high-performance parallel walk of the entire filesystem. It builds a bidirectional tree in memory. Size and count aggregation is performed in a fast post-scan pass to minimize mutex contention. A semaphore of 64 limits concurrency to saturate modern SSDs.
 
-**Generation counter for stale-message rejection.** `Model.generation` is incremented on every navigation. `entryMsg` and `scanDoneMsg` carry the generation at which they were dispatched; messages from a previous generation are silently dropped. This prevents entries from a slow old scan appearing after the user has already navigated elsewhere.
+**Instant O(1) navigation.** After the initial scan, the TUI enters a browsing state where all navigation (Enter, Backspace) only involves updating a pointer to the existing tree. No further disk I/O occurs during navigation.
+
+**Generation counter for stale-message rejection.** `Model.generation` is incremented on every navigation. `progressMsg` carries the generation at which it was dispatched; messages from a previous generation are silently dropped.
 
 **`blockSize` uses `Stat_t.Blocks * 512`.** All size measurements use actual disk allocation (512-byte blocks × number of blocks), not apparent file size, matching `du` behavior.
 

@@ -2,7 +2,8 @@
 
 ## Project Structure & Module Organization
 
-This repository builds `disk-explorer`, a Go TUI with a Bash bootstrap and fallback. The Go entry point is `cmd/disk-explorer/main.go`. Internal packages live under `internal/`: `scanner/` handles directory scanning, `tui/` contains Bubble Tea UI logic, `remote/` handles native SSH scanning, and `assets/` embeds the Bash fallback. The modular Bash implementation is in `src/`; `build.sh` concatenates it into `disk-explorer.sh` and syncs the generated copy to `internal/assets/disk-explorer.sh`. Shell smoke and unit tests live in `tests/`. Design notes and implementation plans are under `docs/superpowers/`.
+This repository builds `disk-explorer`, a Go TUI with a Bash bootstrap and fallback. The Go entry point is `cmd/disk-explorer/main.go`. Internal packages live under `internal/`: `scanner/` handles high-performance parallel recursive scanning, `tui/` contains Bubble Tea UI logic with instant O(1) navigation, `remote/` handles native SSH scanning, and `assets/` embeds the Bash fallback.
+ The modular Bash implementation is in `src/`; `build.sh` concatenates it into `disk-explorer.sh` and syncs the generated copy to `internal/assets/disk-explorer.sh`. Shell smoke and unit tests live in `tests/`. Design notes and implementation plans are under `docs/superpowers/`.
 
 ## Build, Test, and Development Commands
 
