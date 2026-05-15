@@ -63,8 +63,16 @@ verify_sha256() {
     fi
 }
 
+# === GLOBALS ===
+TMP_FILE=""
+
+cleanup() {
+    [[ -n "$TMP_FILE" ]] && rm -f "$TMP_FILE" "${TMP_FILE}.sums"
+}
+trap cleanup EXIT
+
 main() {
-    local os arch tag name url sums_url tmp dest
+    local os arch tag name url sums_url dest
 
     os=$(get_os)
     arch=$(get_arch)
@@ -78,26 +86,24 @@ main() {
     url="https://github.com/${REPO}/releases/download/${tag}/${name}"
     sums_url="https://github.com/${REPO}/releases/download/${tag}/SHA256SUMS"
 
-    tmp=$(mktemp)
-    cleanup() { rm -f "$tmp" "${tmp}.sums"; }
-    trap cleanup EXIT
+    TMP_FILE=$(mktemp)
 
     printf "Téléchargement de %s...\n" "$name"
-    download "$url" "$tmp"
+    download "$url" "$TMP_FILE"
 
     # Verify SHA256
     printf "Vérification du checksum...\n"
-    download "$sums_url" "${tmp}.sums" 2>/dev/null || true
-    if [[ -s "${tmp}.sums" ]]; then
-        expected=$(grep "${name}$" "${tmp}.sums" | awk '{print $1}')
-        [[ -n "$expected" ]] && verify_sha256 "$tmp" "$expected"
+    download "$sums_url" "${TMP_FILE}.sums" 2>/dev/null || true
+    if [[ -s "${TMP_FILE}.sums" ]]; then
+        expected=$(grep "${name}$" "${TMP_FILE}.sums" | awk '{print $1}')
+        [[ -n "$expected" ]] && verify_sha256 "$TMP_FILE" "$expected"
         printf "Checksum OK\n"
     fi
 
     mkdir -p "$INSTALL_DIR"
     dest="${INSTALL_DIR}/disk-explorer"
-    chmod 755 "$tmp"
-    mv "$tmp" "$dest"
+    chmod 755 "$TMP_FILE"
+    mv "$TMP_FILE" "$dest"
     printf "Installé : %s\n" "$dest"
 
     # Remind about PATH if needed
