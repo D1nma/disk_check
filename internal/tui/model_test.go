@@ -3,6 +3,7 @@ package tui
 import (
 	"testing"
 	"github.com/D1nma/disk_check/internal/scanner"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestModelSortEntriesBySize(t *testing.T) {
@@ -59,5 +60,48 @@ func TestModelSortEntriesByReverseSize(t *testing.T) {
 	}
 	if m.Entries[2].Path != "large" {
 		t.Errorf("Expected large last, got %s", m.Entries[2].Path)
+	}
+}
+
+func TestModelNavigation(t *testing.T) {
+	root := &scanner.Node{Path: "/", IsDir: true}
+	child := &scanner.Node{Path: "/child", IsDir: true, Parent: root}
+	root.Children = []*scanner.Node{child}
+
+	m := Model{
+		State:   StateBrowsing,
+		Current: root,
+		Entries: root.Children,
+		Path:    "/",
+	}
+
+	// Navigate into child
+	msg := tea.KeyMsg{Type: tea.KeyEnter}
+	newModel, cmd := m.Update(msg)
+	m = newModel.(Model)
+
+	if cmd != nil {
+		t.Error("Expected nil command for instant navigation")
+	}
+	if m.Current != child {
+		t.Errorf("Expected current node to be child, got %s", m.Current.Path)
+	}
+	if m.Path != "/child" {
+		t.Errorf("Expected path to be /child, got %s", m.Path)
+	}
+
+	// Navigate back
+	msg = tea.KeyMsg{Type: tea.KeyBackspace}
+	newModel, cmd = m.Update(msg)
+	m = newModel.(Model)
+
+	if cmd != nil {
+		t.Error("Expected nil command for instant navigation")
+	}
+	if m.Current != root {
+		t.Errorf("Expected current node to be root, got %s", m.Current.Path)
+	}
+	if m.Path != "/" {
+		t.Errorf("Expected path to be /, got %s", m.Path)
 	}
 }

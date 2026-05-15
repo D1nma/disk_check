@@ -72,7 +72,6 @@ type Model struct {
 	ScannerChan <-chan scanner.ScanProgress
 	UpdateChan  <-chan string
 	CancelScan  context.CancelFunc
-	History     []string
 	SortBy      SortKey
 	SortReverse bool
 	ScanOpts    scanner.ScanOptions
@@ -193,18 +192,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			if len(m.Entries) > 0 && m.Entries[m.Selected].IsDir {
-				m.History = append(m.History, m.Path)
-				return m.navigateTo(m.Entries[m.Selected].Path)
+				selectedChild := m.Entries[m.Selected]
+				m.Current = selectedChild
+				m.Entries = m.Current.Children
+				m.sortEntries()
+				m.Path = m.Current.Path
+				m.Selected = 0
+				m.Offset = 0
+				return m, nil
 			}
 
 		case "backspace", "left", "h":
 			if m.State == StateScanning {
 				break
 			}
-			if len(m.History) > 0 {
-				prev := m.History[len(m.History)-1]
-				m.History = m.History[:len(m.History)-1]
-				return m.navigateTo(prev)
+			if m.Current.Parent != nil {
+				m.Current = m.Current.Parent
+				m.Entries = m.Current.Children
+				m.sortEntries()
+				m.Path = m.Current.Path
+				m.Selected = 0
+				m.Offset = 0
+				return m, nil
 			}
 		}
 
@@ -250,27 +259,6 @@ func (m *Model) sortEntries() {
 		}
 		return res
 	})
-}
-
-func (m Model) navigateTo(newPath string) (tea.Model, tea.Cmd) {
-	if m.CancelScan != nil {
-		m.CancelScan()
-	}
-	m.generation++
-	ctx, cancel := context.WithCancel(context.Background())
-	m.CancelScan = cancel
-	m.Path = newPath
-	m.Entries = nil
-	m.Selected = 0
-	m.Offset = 0
-	m.State = StateScanning
-	m.Progress = scanner.ScanProgress{}
-	ch := scanner.Scan(ctx, newPath, m.ScanOpts)
-	m.ScannerChan = ch
-	return m, tea.Batch(
-		fetchDiskInfo(newPath),
-		listenForProgress(ch, m.generation),
-	)
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────────
