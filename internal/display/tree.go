@@ -9,12 +9,12 @@ import (
 	"github.com/D1nma/disk_check/internal/scanner"
 )
 
-func Tree(w io.Writer, node *scanner.TreeNode, maxDepth int) {
+func Tree(w io.Writer, node *scanner.Node, maxDepth int) {
 	fmt.Fprintf(w, "TREE SIZE VIEW (depth=%d) - %s\n\n", maxDepth, node.Path)
 	printNode(w, node, node.Size, 0, true)
 }
 
-func printNode(w io.Writer, node *scanner.TreeNode, rootSize int64, depth int, isRoot bool) {
+func printNode(w io.Writer, node *scanner.Node, rootSize int64, depth int, isRoot bool) {
 	var pct float64
 	if rootSize > 0 {
 		pct = float64(node.Size) * 100 / float64(rootSize)

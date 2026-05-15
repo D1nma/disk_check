@@ -16,7 +16,7 @@ type DiskInfo struct {
 	Avail int64
 }
 
-func Summary(w io.Writer, path string, entries []scanner.Entry, topFiles []scanner.Entry, di DiskInfo, topN int) {
+func Summary(w io.Writer, path string, entries []*scanner.Node, topFiles []*scanner.Node, di DiskInfo, topN int) {
 	fmt.Fprintf(w, "RAPPORT DISQUE - %s\n", time.Now().Format("2006-01-02 15:04:05"))
 	fmt.Fprintf(w, "Dossier : %s\n", path)
 	if di.Total > 0 {

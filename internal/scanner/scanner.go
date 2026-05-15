@@ -67,11 +67,14 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 				}
 				if final {
 					p.Root = rootNode
-				}
-				select {
-				case ch <- p:
+					ch <- p
 					lastReport = now
-				default:
+				} else {
+					select {
+					case ch <- p:
+						lastReport = now
+					default:
+					}
 				}
 			}
 			progressMu.Unlock()

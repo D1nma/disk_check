@@ -8,14 +8,7 @@ import (
 	"syscall"
 )
 
-type TreeNode struct {
-	Path     string
-	Size     int64
-	IsDir    bool
-	Children []*TreeNode
-}
-
-func ScanTree(ctx context.Context, root string, maxDepth int, opts ScanOptions) (*TreeNode, error) {
+func ScanTree(ctx context.Context, root string, maxDepth int, opts ScanOptions) (*Node, error) {
 	rootInfo, err := os.Lstat(root)
 	if err != nil {
 		return nil, err
@@ -30,8 +23,12 @@ func ScanTree(ctx context.Context, root string, maxDepth int, opts ScanOptions) 
 	return node, nil
 }
 
-func buildTreeNode(ctx context.Context, path string, depth, maxDepth int, rootDev uint64, opts ScanOptions) *TreeNode {
-	node := &TreeNode{Path: path, IsDir: true}
+func buildTreeNode(ctx context.Context, path string, depth, maxDepth int, rootDev uint64, opts ScanOptions) *Node {
+	node := &Node{
+		Name:  filepath.Base(path),
+		Path:  path,
+		IsDir: true,
+	}
 
 	if ctx.Err() != nil || depth >= maxDepth {
 		node.Size = sumDir(ctx, path, rootDev, opts)
@@ -64,14 +61,18 @@ func buildTreeNode(ctx context.Context, path string, depth, maxDepth int, rootDe
 
 		if de.IsDir() {
 			child := buildTreeNode(ctx, childPath, depth+1, maxDepth, rootDev, opts)
+			child.Parent = node
 			node.Children = append(node.Children, child)
 			node.Size += child.Size
 		} else {
 			sz := blockSize(info)
-			node.Children = append(node.Children, &TreeNode{
-				Path:  childPath,
-				Size:  sz,
-				IsDir: false,
+			node.Children = append(node.Children, &Node{
+				Name:    de.Name(),
+				Path:    childPath,
+				Size:    sz,
+				IsDir:   false,
+				ModTime: info.ModTime(),
+				Parent:  node,
 			})
 			node.Size += sz
 		}

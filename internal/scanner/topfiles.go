@@ -9,8 +9,8 @@ import (
 )
 
 // ScanTopFiles returns up to n largest files under root, sorted by size descending.
-func ScanTopFiles(ctx context.Context, root string, n int, opts ScanOptions) []Entry {
-	var files []Entry
+func ScanTopFiles(ctx context.Context, root string, n int, opts ScanOptions) []*Node {
+	var files []*Node
 
 	rootInfo, err := os.Lstat(root)
 	if err != nil {
@@ -42,7 +42,8 @@ func ScanTopFiles(ctx context.Context, root string, n int, opts ScanOptions) []E
 				return nil
 			}
 		}
-		files = append(files, Entry{
+		files = append(files, &Node{
+			Name:    d.Name(),
 			Path:    path,
 			Size:    blockSize(info),
 			IsDir:   false,
