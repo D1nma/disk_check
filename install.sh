@@ -79,7 +79,8 @@ main() {
     sums_url="https://github.com/${REPO}/releases/download/${tag}/SHA256SUMS"
 
     tmp=$(mktemp)
-    trap 'rm -f "$tmp" "${tmp}.sums"' EXIT
+    cleanup() { rm -f "$tmp" "${tmp}.sums"; }
+    trap cleanup EXIT
 
     printf "Téléchargement de %s...\n" "$name"
     download "$url" "$tmp"
