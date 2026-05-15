@@ -207,12 +207,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			if m.Current.Parent != nil {
+				oldPath := m.Current.Path
 				m.Current = m.Current.Parent
 				m.Entries = m.Current.Children
 				m.sortEntries()
 				m.Path = m.Current.Path
+				
+				// Restore selection to the directory we just left
 				m.Selected = 0
-				m.Offset = 0
+				for i, e := range m.Entries {
+					if e.Path == oldPath {
+						m.Selected = i
+						break
+					}
+				}
+				m.clampScroll()
 				return m, nil
 			}
 		}

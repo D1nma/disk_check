@@ -37,30 +37,21 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 		}
 
 		var wg sync.WaitGroup
-		sem := make(chan struct{}, 32)
+		sem := make(chan struct{}, 64)
 
-		var totalFiles int32
-		var totalDirs int32
+		var totalFiles int64
+		var totalDirs int64
 		var totalSize int64
 		var progressMu sync.Mutex
 		var lastReport time.Time
 
-		report := func(path string, isDir bool, size int64, final bool) {
+		report := func(path string, final bool) {
 			progressMu.Lock()
-			if !final {
-				if isDir {
-					atomic.AddInt32(&totalDirs, 1)
-				} else {
-					atomic.AddInt32(&totalFiles, 1)
-					atomic.AddInt64(&totalSize, size)
-				}
-			}
-
 			now := time.Now()
 			if final || now.Sub(lastReport) > 50*time.Millisecond {
 				p := ScanProgress{
-					Files:   int(atomic.LoadInt32(&totalFiles)),
-					Dirs:    int(atomic.LoadInt32(&totalDirs)),
+					Files:   int(atomic.LoadInt64(&totalFiles)),
+					Dirs:    int(atomic.LoadInt64(&totalDirs)),
 					Size:    atomic.LoadInt64(&totalSize),
 					Current: path,
 					Done:    final,
@@ -89,18 +80,20 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 				return
 			}
 
+			localChildren := make([]*Node, 0, len(entries))
 			for _, entry := range entries {
 				if ctx.Err() != nil {
 					return
 				}
 
-				info, err := entry.Info()
-				if err != nil {
+				name := entry.Name()
+				childPath := path + string(os.PathSeparator) + name
+				if isExcluded(childPath, opts.Excludes) {
 					continue
 				}
 
-				childPath := filepath.Join(path, entry.Name())
-				if isExcluded(childPath, opts.Excludes) {
+				info, err := entry.Info()
+				if err != nil {
 					continue
 				}
 
@@ -111,26 +104,22 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 				}
 
 				child := &Node{
-					Name:    entry.Name(),
+					Name:    name,
 					Path:    childPath,
 					IsDir:   entry.IsDir(),
 					ModTime: info.ModTime(),
 					Parent:  node,
 				}
-
-				node.mu.Lock()
-				node.Children = append(node.Children, child)
-				node.mu.Unlock()
+				localChildren = append(localChildren, child)
 
 				if !entry.IsDir() {
 					sz := blockSize(info)
 					child.Size = sz
 					child.FileCount = 1
-					updateAncestors(child, sz, 1, 0)
-					report(childPath, false, sz, false)
+					atomic.AddInt64(&totalFiles, 1)
+					atomic.AddInt64(&totalSize, sz)
 				} else {
-					updateAncestors(child, 0, 0, 1)
-					report(childPath, true, 0, false)
+					atomic.AddInt64(&totalDirs, 1)
 					wg.Add(1)
 					go func(cp string, cn *Node) {
 						sem <- struct{}{}
@@ -138,31 +127,57 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 						scanDir(cp, cn)
 					}(childPath, child)
 				}
+				
+				// Report progress occasionally
+				if atomic.LoadInt64(&totalFiles)%100 == 0 {
+					report(childPath, false)
+				}
 			}
+
+			node.mu.Lock()
+			node.Children = localChildren
+			node.mu.Unlock()
 		}
 
 		wg.Add(1)
 		scanDir(root, rootNode)
 		wg.Wait()
 
-		report(root, true, 0, true)
+		// Post-scan aggregation to compute cumulative sizes and counts O(N)
+		var aggregate func(n *Node) (int64, int, int)
+		aggregate = func(n *Node) (int64, int, int) {
+			if !n.IsDir {
+				return n.Size, 1, 0
+			}
+			var totalSize int64
+			var totalFiles int
+			var totalDirs int
+			for _, child := range n.Children {
+				s, f, d := aggregate(child)
+				totalSize += s
+				totalFiles += f
+				totalDirs += d
+			}
+			n.Size = totalSize
+			n.FileCount = totalFiles
+			n.DirCount = totalDirs + len(n.Children) - totalFiles // simplify
+			// Re-calculate DirCount accurately
+			dirCount := 0
+			for _, child := range n.Children {
+				if child.IsDir {
+					dirCount += 1 + child.DirCount
+				}
+			}
+			n.DirCount = dirCount
+			return n.Size, n.FileCount, n.DirCount
+		}
+		aggregate(rootNode)
+
+		report(root, true)
 	}()
 	return ch
 }
 
-func updateAncestors(node *Node, size int64, files, dirs int) {
-	curr := node.Parent
-	for curr != nil {
-		curr.mu.Lock()
-		curr.Size += size
-		curr.FileCount += files
-		curr.DirCount += dirs
-		curr.mu.Unlock()
-		curr = curr.Parent
-	}
-}
-
-// blockSize returns the actual disk usage of a file in bytes (512-byte blocks × 512).
 func blockSize(info os.FileInfo) int64 {
 	if st, ok := info.Sys().(*syscall.Stat_t); ok {
 		return st.Blocks * 512
