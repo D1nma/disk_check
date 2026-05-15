@@ -1,6 +1,9 @@
 package scanner
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 type Entry struct {
 	Path    string
@@ -12,4 +15,17 @@ type Entry struct {
 type ScanOptions struct {
 	SameDevice bool     // like du -x: stay on same filesystem
 	Excludes   []string // absolute paths to skip
+}
+
+type Node struct {
+	Name      string
+	Path      string
+	Size      int64
+	IsDir     bool
+	ModTime   time.Time
+	Parent    *Node
+	Children  []*Node
+	FileCount int
+	DirCount  int
+	mu        sync.Mutex // For thread-safe aggregation during parallel scan
 }
