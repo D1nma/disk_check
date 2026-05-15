@@ -29,3 +29,12 @@ type Node struct {
 	DirCount  int
 	mu        sync.Mutex // For thread-safe aggregation during parallel scan
 }
+
+type ScanProgress struct {
+	Files   int
+	Dirs    int
+	Size    int64
+	Current string
+	Done    bool
+	Root    *Node
+}

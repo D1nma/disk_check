@@ -1,106 +1,161 @@
 # disk-explorer
 
-A fast, portable disk usage explorer. Written in Go with a seamless Bash bootstrap and fallback.
+A fast, interactive disk usage explorer. Written in Go with a Bash bootstrap and fallback.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/install.sh | bash
 ```
 
 ```
-DISK EXPLORER  /home/user  MÊME PARTITION · size
-████████░░░░░░░░░░░ 42%   58 Go / 230 Go
-────────────────────────────────────────────────────────────────────────────
-   1)    21.3 GiB  [##########]  .cargo/
-   2)    18.7 GiB  [########  ]  node_modules/
-   3)     6.1 GiB  [###       ]  .local/
-   4)   512.0 MiB  [##        ]  archive.tar.gz
-   5)   128.0 MiB  [#         ]  Downloads/
-────────────────────────────────────────────────────────────────────────────
-  [↑↓] navigate  [Enter] open  [s] sort  [n] name  [t] date  [q] quit
+DISK EXPLORER  /home/user  ALL · size ↓  ⠋
+███████████████░░░░░ 78%  92.0 GiB / 116.6 GiB
+────────────────────────────────────────────────────────
+>    21.3 GiB  ██████████  .cargo/
+     18.7 GiB  █████████░  node_modules/
+      6.1 GiB  ███░░░░░░░  .local/
+    512.0 MiB  ██░░░░░░░░  archive.tar.gz
+    128.0 MiB  █░░░░░░░░░  Downloads/
+────────────────────────────────────────────────────────
+[↑↓/jk] nav  [Enter] cd  [←/h] retour  [s]ize [n]ame [t]ime  [q]uit
 ```
 
 ---
 
 ## Features
 
-- **Hybrid Architecture** — A pre-compiled Go binary for speed, wrapped in a portable Bash script for a zero-install experience.
-- **Lazy Scanning** — Only scans the directory you are looking at. Fast, efficient, and keeps memory usage to a minimum.
-- **Real-time TUI** — Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea), entries stream live as they are discovered.
-- **Native SSH Support** — Built-in SSH client (`golang.org/x/crypto/ssh`) to scan remote hosts without depending on the system's `ssh` command.
-- **Automatic Distribution** — The Bash wrapper detects your OS/Architecture and automatically downloads the correct Go binary from GitHub Releases.
-- **Reliable Fallback** — If the Go binary can't be run (unsupported platform or offline), it seamlessly falls back to the original full-featured Bash implementation.
+- **Real-time TUI** — built with [Bubble Tea](https://github.com/charmbracelet/bubbletea); entries stream live as directories are sized
+- **Lazy scanning** — depth-1 scan with parallel goroutines for cumulative directory sizes; navigating into a subdirectory triggers a fresh scan
+- **Non-interactive modes** — `--summary`, `--report`, `--tree` for scripting and CI pipelines
+- **Auto-update** — checks for new releases at startup; `--update` upgrades to the latest binary
+- **SHA256 verification** — all downloaded binaries are verified against the release `SHA256SUMS` file
+- **Bash fallback** — full-featured Bash implementation for offline or unsupported environments
+- **Native SSH support** — scan remote hosts via the built-in SSH client (no system `ssh` required)
 
 ---
 
-## Quick start
+## Installation
 
-### Universal Command
+### Installer (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/install.sh | bash
+```
+
+Installs the binary to `~/.local/bin`. Override with `DISK_EXPLORER_INSTALL_DIR=/usr/local/bin`.
+
+### Run without installing
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh | bash
 ```
 
-The script will automatically detect your platform (Linux/macOS), architecture (amd64/arm64), and download the appropriate Go binary.
-
-### Explicit Bash Fallback
-
-If you wish to force the legacy Bash implementation:
-
-```bash
-./disk-explorer.sh --bash [PATH]
-```
+On a tagged release, the script downloads and caches the binary automatically. On untagged builds (or offline), it runs the full Bash fallback.
 
 ---
 
 ## Usage
 
+### Interactive TUI
+
 ```bash
-# Current directory
-./disk-explorer.sh
+disk-explorer [PATH]
 
-# Specific path
-./disk-explorer.sh /var
-
-# Remote scan via native Go SSH
-./disk-explorer.sh --remote --remote-hosts user@host1,user@host2
+# Stay on the same filesystem (equivalent to du -x)
+disk-explorer --mode partition /
 ```
 
-### TUI key bindings
+**Key bindings**
 
 | Key | Action |
-|---|---|
-| `↑` `↓` (or `k` `j`) | Navigate list |
-| `Enter` | Open directory (Lazy Scan) |
-| `Backspace` (or `←` `h`) | Go up to parent directory |
-| `s` | Sort by Size (toggle Asc/Desc) |
-| `n` | Sort by Name (toggle Asc/Desc) |
-| `t` | Sort by Date (toggle Asc/Desc) |
-| `q` | Quit |
+|-----|--------|
+| `↑` `↓` / `k` `j` | Navigate the list |
+| `Enter` | Open directory (triggers fresh scan) |
+| `Backspace` / `←` / `h` | Go to parent directory |
+| `s` | Sort by size (press again to reverse) |
+| `n` | Sort by name (press again to reverse) |
+| `t` | Sort by modification date (press again to reverse) |
+| `q` / `Ctrl+C` | Quit |
+
+### Non-interactive modes
+
+```bash
+# Print top directories and files to stdout
+disk-explorer --summary /var
+
+# Write a timestamped report to a file
+disk-explorer --report /var
+disk-explorer --report --report-dir ~/reports /var
+
+# Tree view with sizes and percentages
+disk-explorer --tree /var
+disk-explorer --tree --tree-depth 5 /var
+
+# Show 30 entries instead of the default 20
+disk-explorer --top 30 --summary /
+```
+
+### Maintenance
+
+```bash
+disk-explorer --version          # print the current version
+disk-explorer --update           # download and cache the latest release
+disk-explorer --bash             # force the Bash fallback (skip Go binary)
+```
+
+### Remote scan (SSH)
+
+```bash
+disk-explorer --remote --remote-hosts user@host1,user@host2
+```
 
 ---
 
 ## Repository structure
 
 ```
-disk-explorer.sh      # distribution script (bootstrap + bash fallback)
-build.sh              # build orchestrator (Go build + Bash assembly)
-cmd/disk-explorer/    # Go entry point
+install.sh               # one-liner installer (curl | bash)
+disk-explorer.sh         # distribution script (bootstrap + bash fallback)
+build.sh                 # assembles src/*.sh → disk-explorer.sh
+cmd/disk-explorer/       # Go entry point
 internal/
-  tui/                # Bubble Tea UI logic
-  scanner/            # Parallel directory scanner
-  remote/             # Native Go SSH client
-  assets/             # Embedded bash script for fallback/remote
-src/                  # Original Bash implementation (modules)
-docs/
-  superpowers/        # architecture and implementation history
+  tui/                   # Bubble Tea TUI (model, view, update loop)
+  scanner/               # depth-1 scanner, ScanTree, ScanTopFiles
+  display/               # non-interactive formatters (summary, tree)
+  updater/               # GitHub release check and self-update
+  remote/                # native Go SSH client
+  assets/                # embedded bash script (used for remote runs)
+src/                     # Bash implementation (fallback)
+  main.sh                # constants, arg parsing, dispatch
+  utils.sh               # pure helpers
+  scan.sh                # du/find pipelines
+  display.sh             # summary, report, tree output
+  tui.sh                 # full-screen bash TUI
+.github/workflows/
+  ci.yml                 # build + test + vet on every push
+  release.yml            # multi-platform release on v* tag push
 ```
 
 ---
 
 ## Requirements
 
-- **Go version (default)**: Linux or macOS (amd64/arm64).
-- **Bash version (fallback)**: GNU/Linux with Bash ≥ 4.4 and standard GNU coreutils.
+| Mode | Requirements |
+|------|-------------|
+| Go binary (default) | Linux or macOS, amd64 or arm64 |
+| Bash fallback | Bash ≥ 4.4, GNU coreutils (`find -printf`, `sort -z`, `du -0`, `head -z`) |
+
+macOS Bash fallback: `brew install bash coreutils gawk findutils`
+
+---
+
+## Releasing a new version
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+The `release.yml` workflow builds `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` binaries, generates `SHA256SUMS`, and publishes a GitHub Release automatically.
 
 ---
 
