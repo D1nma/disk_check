@@ -12,6 +12,8 @@ import (
 )
 
 // Scan builds a full Node tree and reports progress via ScanProgress.
+// It uses a fixed worker pool (64 workers) to bound goroutine count,
+// avoiding unbounded goroutine creation on wide/deep filesystems.
 func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgress {
 	ch := make(chan ScanProgress, 128)
 	go func() {
@@ -36,8 +38,13 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			ModTime: rootInfo.ModTime(),
 		}
 
-		var wg sync.WaitGroup
-		sem := make(chan struct{}, 64)
+		type dirTask struct {
+			path string
+			node *Node
+		}
+
+		const numWorkers = 64
+		taskCh := make(chan dirTask, numWorkers*16)
 
 		var totalFiles int64
 		var totalDirs int64
@@ -71,9 +78,28 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			progressMu.Unlock()
 		}
 
-		var scanDir func(path string, node *Node)
-		scanDir = func(path string, node *Node) {
-			defer wg.Done()
+		var taskWg sync.WaitGroup
+
+		// submit enqueues a directory task. If taskCh is full it spawns a
+		// lightweight relay goroutine (send-only, no I/O) rather than blocking
+		// the calling worker.
+		submit := func(t dirTask) {
+			taskWg.Add(1)
+			select {
+			case taskCh <- t:
+			default:
+				go func() {
+					select {
+					case taskCh <- t:
+					case <-ctx.Done():
+						taskWg.Done()
+					}
+				}()
+			}
+		}
+
+		processDir := func(path string, node *Node) {
+			defer taskWg.Done()
 
 			entries, err := os.ReadDir(path)
 			if err != nil {
@@ -81,6 +107,12 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			}
 
 			localChildren := make([]*Node, 0, len(entries))
+			defer func() {
+				node.mu.Lock()
+				node.Children = localChildren
+				node.mu.Unlock()
+			}()
+
 			for _, entry := range entries {
 				if ctx.Err() != nil {
 					return
@@ -120,48 +152,50 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 					atomic.AddInt64(&totalSize, sz)
 				} else {
 					atomic.AddInt64(&totalDirs, 1)
-					wg.Add(1)
-					go func(cp string, cn *Node) {
-						sem <- struct{}{}
-						defer func() { <-sem }()
-						scanDir(cp, cn)
-					}(childPath, child)
+					submit(dirTask{childPath, child})
 				}
-				
-				// Report progress occasionally
+
 				if atomic.LoadInt64(&totalFiles)%100 == 0 {
 					report(childPath, false)
 				}
 			}
-
-			node.mu.Lock()
-			node.Children = localChildren
-			node.mu.Unlock()
 		}
 
-		wg.Add(1)
-		scanDir(root, rootNode)
-		wg.Wait()
+		var workerWg sync.WaitGroup
+		for i := 0; i < numWorkers; i++ {
+			workerWg.Add(1)
+			go func() {
+				defer workerWg.Done()
+				for task := range taskCh {
+					processDir(task.path, task.node)
+				}
+			}()
+		}
 
-		// Post-scan aggregation to compute cumulative sizes and counts O(N)
+		submit(dirTask{root, rootNode})
+		go func() {
+			taskWg.Wait()
+			close(taskCh)
+		}()
+
+		workerWg.Wait()
+
+		// Post-scan aggregation: compute cumulative sizes and counts in O(N).
 		var aggregate func(n *Node) (int64, int, int)
 		aggregate = func(n *Node) (int64, int, int) {
 			if !n.IsDir {
 				return n.Size, 1, 0
 			}
-			var totalSize int64
-			var totalFiles int
-			var totalDirs int
+			var sz int64
+			var files, dirs int
 			for _, child := range n.Children {
 				s, f, d := aggregate(child)
-				totalSize += s
-				totalFiles += f
-				totalDirs += d
+				sz += s
+				files += f
+				dirs += d
 			}
-			n.Size = totalSize
-			n.FileCount = totalFiles
-			n.DirCount = totalDirs + len(n.Children) - totalFiles // simplify
-			// Re-calculate DirCount accurately
+			n.Size = sz
+			n.FileCount = files
 			dirCount := 0
 			for _, child := range n.Children {
 				if child.IsDir {
