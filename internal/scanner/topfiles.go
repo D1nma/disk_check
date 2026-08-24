@@ -1,62 +1,49 @@
 package scanner
 
-import (
-	"context"
-	"os"
-	"path/filepath"
-	"sort"
-	"syscall"
-)
+import "container/heap"
 
-// ScanTopFiles returns up to n largest files under root, sorted by size descending.
-func ScanTopFiles(ctx context.Context, root string, n int, opts ScanOptions) []*Node {
-	var files []*Node
+type fileHeap []*Node
 
-	rootInfo, err := os.Lstat(root)
-	if err != nil {
+func (h fileHeap) Len() int           { return len(h) }
+func (h fileHeap) Less(i, j int) bool { return h[i].Size < h[j].Size }
+func (h fileHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *fileHeap) Push(x any)        { *h = append(*h, x.(*Node)) }
+func (h *fileHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[:n-1]
+	return x
+}
+
+// TopFiles returns up to limit largest files in n's subtree (in memory).
+func TopFiles(n *Node, limit int) []*Node {
+	if n == nil || limit <= 0 {
 		return nil
 	}
-	var rootDev uint64
-	if opts.SameDevice {
-		if st, ok := rootInfo.Sys().(*syscall.Stat_t); ok {
-			rootDev = uint64(st.Dev)
+	h := &fileHeap{}
+	heap.Init(h)
+	var walk func(*Node)
+	walk = func(cur *Node) {
+		if cur == nil {
+			return
 		}
-	}
-
-	filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || ctx.Err() != nil {
-			return nil
-		}
-		if d.IsDir() {
-			if path != root && isExcluded(path, opts.Excludes) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		if opts.SameDevice && rootDev != 0 {
-			if st, ok := info.Sys().(*syscall.Stat_t); ok && uint64(st.Dev) != rootDev {
-				return nil
+		if !cur.IsDir && cur.Size > 0 {
+			if h.Len() < limit {
+				heap.Push(h, cur)
+			} else if (*h)[0].Size < cur.Size {
+				heap.Pop(h)
+				heap.Push(h, cur)
 			}
 		}
-		files = append(files, &Node{
-			Name:    d.Name(),
-			Size:    blockSize(info),
-			IsDir:   false,
-			ModTime: info.ModTime().Unix(),
-		})
-		return nil
-	})
-
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].Size > files[j].Size
-	})
-
-	if n > 0 && len(files) > n {
-		return files[:n]
+		for _, c := range cur.Children {
+			walk(c)
+		}
 	}
-	return files
+	walk(n)
+	out := make([]*Node, h.Len())
+	for i := len(out) - 1; i >= 0; i-- {
+		out[i] = heap.Pop(h).(*Node)
+	}
+	return out
 }

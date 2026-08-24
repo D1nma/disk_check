@@ -192,14 +192,8 @@ func TestSizeAggregation(t *testing.T) {
 	}
 }
 
-func TestScanTopFiles(t *testing.T) {
-	tmp, err := os.MkdirTemp("", "scanner_topfiles_test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmp)
-
-	// Create files of different sizes
+func TestTopFiles(t *testing.T) {
+	tmp := t.TempDir()
 	files := []struct {
 		name string
 		size int
@@ -209,25 +203,29 @@ func TestScanTopFiles(t *testing.T) {
 		{"large", 1000},
 		{"huge", 10000},
 	}
-
 	for _, f := range files {
 		if err := os.WriteFile(filepath.Join(tmp, f.name), make([]byte, f.size), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
-
-	ctx := context.Background()
-	top := ScanTopFiles(ctx, tmp, 2, ScanOptions{})
-
-	if len(top) != 2 {
-		t.Fatalf("expected 2 top files, got %d", len(top))
+	var root *Node
+	for p := range Scan(context.Background(), tmp, ScanOptions{}) {
+		if p.Done {
+			root = p.Root
+		}
 	}
-
+	if root == nil {
+		t.Fatal("no root")
+	}
+	top := TopFiles(root, 2)
+	if len(top) != 2 {
+		t.Fatalf("expected 2, got %d", len(top))
+	}
 	if top[0].Name != "huge" {
-		t.Errorf("expected largest file to be huge, got %s", top[0].Name)
+		t.Errorf("expected huge, got %s", top[0].Name)
 	}
 	if top[1].Name != "large" {
-		t.Errorf("expected second largest file to be large, got %s", top[1].Name)
+		t.Errorf("expected large, got %s", top[1].Name)
 	}
 }
 
