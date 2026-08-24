@@ -244,7 +244,11 @@ func (m *Model) clampScroll() {
 }
 
 func (m Model) listHeight() int {
-	h := m.Height - 5 // header(1) + disk(1) + sep(1) + sep(1) + footer(1)
+	overhead := 5 // header + disk + sep + sep + footer
+	if m.State == StateBrowsing {
+		overhead = 6 // + here line
+	}
+	h := m.Height - overhead
 	if h < 1 {
 		h = 1
 	}
@@ -351,6 +355,22 @@ func (m Model) View() string {
 		b.WriteString(diskLine + "\n")
 	}
 
+	if m.State == StateBrowsing && m.Current != nil {
+		var parts []string
+		parts = append(parts, formatSize(m.Current.Size))
+		if m.Current.Parent != nil && m.Current.Parent.Size > 0 {
+			pct := m.Current.Size * 100 / m.Current.Parent.Size
+			parts = append(parts, fmt.Sprintf("%d%% of parent", pct))
+		}
+		if m.diskTotal > 0 {
+			pct := m.Current.Size * 100 / m.diskTotal
+			parts = append(parts, fmt.Sprintf("%d%% of disk", pct))
+		}
+		parts = append(parts, fmt.Sprintf("%d files", m.Current.FileCount))
+		parts = append(parts, fmt.Sprintf("%d dirs", m.Current.DirCount))
+		b.WriteString(dimStyle.Render("  "+strings.Join(parts, "  ")) + "\n")
+	}
+
 	b.WriteString(sep + "\n")
 
 	if m.State == StateScanning {
@@ -397,7 +417,15 @@ func (m Model) View() string {
 			if e.IsDir {
 				name += "/"
 			}
-			line := fmt.Sprintf("%s%10s  %s  %s", cursor, formatSize(e.Size), bar, name)
+			var dirSize int64
+			if m.Current != nil {
+				dirSize = m.Current.Size
+			}
+			pctStr := "  0.0%"
+			if dirSize > 0 {
+				pctStr = fmt.Sprintf("%5.1f%%", float64(e.Size)*100/float64(dirSize))
+			}
+			line := fmt.Sprintf("%s%10s  %s  %s  %s", cursor, formatSize(e.Size), pctStr, bar, name)
 			if i == m.Selected {
 				b.WriteString(selectedStyle.Render(line) + "\n")
 			} else {

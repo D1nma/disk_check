@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/D1nma/disk_check/internal/scanner"
@@ -102,5 +103,49 @@ func TestModelNavigation(t *testing.T) {
 	}
 	if m.Path != "/" {
 		t.Errorf("Expected path to be /, got %s", m.Path)
+	}
+}
+
+func TestViewHereLineOmitsParentAtRoot(t *testing.T) {
+	root := &scanner.Node{Name: "/data", Size: 1000, FileCount: 3, DirCount: 1, IsDir: true}
+	child := &scanner.Node{Name: "a", Size: 400, IsDir: true, Parent: root}
+	root.Children = []*scanner.Node{child}
+	m := Model{
+		State:     StateBrowsing,
+		Path:      "/data",
+		Current:   root,
+		Entries:   root.Children,
+		diskTotal: 10000,
+		Width:     80,
+		Height:    24,
+	}
+	v := m.View()
+	if !strings.Contains(v, "/data") {
+		t.Errorf("missing current path in view:\n%s", v)
+	}
+	if strings.Contains(v, "of parent") {
+		t.Errorf("root should omit parent percent:\n%s", v)
+	}
+	if !strings.Contains(v, "of disk") {
+		t.Errorf("missing disk percent:\n%s", v)
+	}
+}
+
+func TestViewHereLineIncludesParentWhenNested(t *testing.T) {
+	root := &scanner.Node{Name: "/data", Size: 1000, IsDir: true}
+	child := &scanner.Node{Name: "a", Size: 400, FileCount: 1, DirCount: 0, IsDir: true, Parent: root}
+	root.Children = []*scanner.Node{child}
+	m := Model{
+		State:     StateBrowsing,
+		Path:      "/data/a",
+		Current:   child,
+		Entries:   child.Children,
+		diskTotal: 10000,
+		Width:     80,
+		Height:    24,
+	}
+	v := m.View()
+	if !strings.Contains(v, "of parent") {
+		t.Errorf("nested dir should show parent percent:\n%s", v)
 	}
 }
