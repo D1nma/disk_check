@@ -23,8 +23,6 @@ func workerCount() int {
 	return n
 }
 
-func isKernFS(fsType int64) bool { return false }
-
 type inodeKey struct {
 	dev uint64
 	ino uint64

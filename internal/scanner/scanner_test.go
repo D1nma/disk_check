@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -303,6 +304,24 @@ func TestNodePath(t *testing.T) {
 	etc := &Node{Name: "etc", IsDir: true, Parent: slash}
 	if got := etc.Path(); got != "/etc" {
 		t.Errorf("slash join Path()=%q, want /etc", got)
+	}
+}
+
+func TestIsKernFS(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("kernfs skip is Linux-only")
+	}
+	if !isKernFS(0x9fa0) {
+		t.Error("proc should be kernfs")
+	}
+	if !isKernFS(0x62656572) {
+		t.Error("sysfs should be kernfs")
+	}
+	if isKernFS(0x9123683e) {
+		t.Error("btrfs must not be skipped")
+	}
+	if isKernFS(0x01021994) {
+		t.Error("tmpfs must not be skipped (would drop /tmp)")
 	}
 }
 
