@@ -31,11 +31,14 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			}
 		}
 
+		abs, absErr := filepath.Abs(root)
+		if absErr != nil {
+			abs = root
+		}
 		rootNode := &Node{
-			Name:    filepath.Base(root),
-			Path:    root,
+			Name:    abs,
 			IsDir:   rootInfo.IsDir(),
-			ModTime: rootInfo.ModTime(),
+			ModTime: rootInfo.ModTime().Unix(),
 		}
 
 		type dirTask struct {
@@ -108,9 +111,7 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 
 			localChildren := make([]*Node, 0, len(entries))
 			defer func() {
-				node.mu.Lock()
 				node.Children = localChildren
-				node.mu.Unlock()
 			}()
 
 			for _, entry := range entries {
@@ -137,9 +138,8 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 
 				child := &Node{
 					Name:    name,
-					Path:    childPath,
 					IsDir:   entry.IsDir(),
-					ModTime: info.ModTime(),
+					ModTime: info.ModTime().Unix(),
 					Parent:  node,
 				}
 				localChildren = append(localChildren, child)

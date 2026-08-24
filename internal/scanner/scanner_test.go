@@ -154,7 +154,7 @@ func TestSizeAggregation(t *testing.T) {
 	findNode := func(n *Node, path string) *Node {
 		var walk func(*Node) *Node
 		walk = func(curr *Node) *Node {
-			if curr.Path == path {
+			if curr.Path() == path {
 				return curr
 			}
 			for _, child := range curr.Children {
@@ -222,11 +222,11 @@ func TestScanTopFiles(t *testing.T) {
 		t.Fatalf("expected 2 top files, got %d", len(top))
 	}
 
-	if filepath.Base(top[0].Path) != "huge" {
-		t.Errorf("expected largest file to be huge, got %s", filepath.Base(top[0].Path))
+	if top[0].Name != "huge" {
+		t.Errorf("expected largest file to be huge, got %s", top[0].Name)
 	}
-	if filepath.Base(top[1].Path) != "large" {
-		t.Errorf("expected second largest file to be large, got %s", filepath.Base(top[1].Path))
+	if top[1].Name != "large" {
+		t.Errorf("expected second largest file to be large, got %s", top[1].Name)
 	}
 }
 
@@ -270,7 +270,7 @@ func TestScanTree(t *testing.T) {
 
 	// dir1 should have children empty because maxDepth=1
 	for _, child := range tree.Children {
-		if filepath.Base(child.Path) == "dir1" {
+		if child.Name == "dir1" {
 			if len(child.Children) != 0 {
 				t.Errorf("expected dir1 to have 0 children due to maxDepth=1, got %d", len(child.Children))
 			}
@@ -279,5 +279,29 @@ func TestScanTree(t *testing.T) {
 				t.Errorf("expected dir1 size >= 200, got %d", child.Size)
 			}
 		}
+	}
+}
+
+func TestNodePath(t *testing.T) {
+	root := &Node{Name: "/home/user", IsDir: true}
+	child := &Node{Name: "docs", IsDir: true, Parent: root}
+	file := &Node{Name: "a.txt", Parent: child}
+	root.Children = []*Node{child}
+	child.Children = []*Node{file}
+
+	if got := root.Path(); got != "/home/user" {
+		t.Errorf("root.Path()=%q", got)
+	}
+	if got := child.Path(); got != "/home/user/docs" {
+		t.Errorf("child.Path()=%q", got)
+	}
+	if got := file.Path(); got != "/home/user/docs/a.txt" {
+		t.Errorf("file.Path()=%q", got)
+	}
+
+	slash := &Node{Name: "/", IsDir: true}
+	etc := &Node{Name: "etc", IsDir: true, Parent: slash}
+	if got := etc.Path(); got != "/etc" {
+		t.Errorf("slash join Path()=%q, want /etc", got)
 	}
 }

@@ -44,10 +44,9 @@ func ScanTopFiles(ctx context.Context, root string, n int, opts ScanOptions) []*
 		}
 		files = append(files, &Node{
 			Name:    d.Name(),
-			Path:    path,
 			Size:    blockSize(info),
 			IsDir:   false,
-			ModTime: info.ModTime(),
+			ModTime: info.ModTime().Unix(),
 		})
 		return nil
 	})

@@ -3,14 +3,13 @@ package display
 import (
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 
 	"github.com/D1nma/disk_check/internal/scanner"
 )
 
 func Tree(w io.Writer, node *scanner.Node, maxDepth int) {
-	fmt.Fprintf(w, "TREE SIZE VIEW (depth=%d) - %s\n\n", maxDepth, node.Path)
+	fmt.Fprintf(w, "TREE SIZE VIEW (depth=%d) - %s\n\n", maxDepth, node.Path())
 	printNode(w, node, node.Size, 0, true)
 }
 
@@ -20,7 +19,7 @@ func printNode(w io.Writer, node *scanner.Node, rootSize int64, depth int, isRoo
 		pct = float64(node.Size) * 100 / float64(rootSize)
 	}
 
-	name := filepath.Base(node.Path)
+	name := node.Name
 	if isRoot {
 		name = "."
 	}

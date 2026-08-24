@@ -24,9 +24,12 @@ func ScanTree(ctx context.Context, root string, maxDepth int, opts ScanOptions) 
 }
 
 func buildTreeNode(ctx context.Context, path string, depth, maxDepth int, rootDev uint64, opts ScanOptions) *Node {
+	name := filepath.Base(path)
+	if depth == 0 {
+		name = path
+	}
 	node := &Node{
-		Name:  filepath.Base(path),
-		Path:  path,
+		Name:  name,
 		IsDir: true,
 	}
 
@@ -68,10 +71,9 @@ func buildTreeNode(ctx context.Context, path string, depth, maxDepth int, rootDe
 			sz := blockSize(info)
 			node.Children = append(node.Children, &Node{
 				Name:    de.Name(),
-				Path:    childPath,
 				Size:    sz,
 				IsDir:   false,
-				ModTime: info.ModTime(),
+				ModTime: info.ModTime().Unix(),
 				Parent:  node,
 			})
 			node.Size += sz

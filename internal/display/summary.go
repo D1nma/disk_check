@@ -3,7 +3,6 @@ package display
 import (
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -36,7 +35,7 @@ func Summary(w io.Writer, path string, entries []*scanner.Node, topFiles []*scan
 		if count >= topN {
 			break
 		}
-		fmt.Fprintf(w, "  %10s  %s\n", FormatSize(e.Size), filepath.Base(e.Path)+"/")
+		fmt.Fprintf(w, "  %10s  %s\n", FormatSize(e.Size), e.Name+"/")
 		count++
 	}
 	if count == 0 {
@@ -46,7 +45,7 @@ func Summary(w io.Writer, path string, entries []*scanner.Node, topFiles []*scan
 
 	fmt.Fprintf(w, "TOP FICHIERS :\n")
 	for _, f := range topFiles {
-		rel := f.Path
+		rel := f.Path()
 		if strings.HasPrefix(rel, path+"/") {
 			rel = rel[len(path)+1:]
 		}

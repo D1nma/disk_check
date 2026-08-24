@@ -1,9 +1,6 @@
 package scanner
 
-import (
-	"sync"
-	"time"
-)
+import "os"
 
 type ScanOptions struct {
 	SameDevice bool     // like du -x: stay on same filesystem
@@ -12,15 +9,27 @@ type ScanOptions struct {
 
 type Node struct {
 	Name      string
-	Path      string
 	Size      int64
-	IsDir     bool
-	ModTime   time.Time
+	ModTime   int64 // unix seconds
 	Parent    *Node
 	Children  []*Node
 	FileCount int
 	DirCount  int
-	mu        sync.Mutex // For thread-safe aggregation during parallel scan
+	IsDir     bool
+}
+
+func (n *Node) Path() string {
+	if n == nil {
+		return ""
+	}
+	if n.Parent == nil {
+		return n.Name
+	}
+	p := n.Parent.Path()
+	if p == string(os.PathSeparator) {
+		return p + n.Name
+	}
+	return p + string(os.PathSeparator) + n.Name
 }
 
 type ScanProgress struct {

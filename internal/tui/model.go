@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -196,7 +195,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Current = selectedChild
 				m.Entries = m.Current.Children
 				m.sortEntries()
-				m.Path = m.Current.Path
+				m.Path = m.Current.Path()
 				m.Selected = 0
 				m.Offset = 0
 				return m, nil
@@ -207,16 +206,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			if m.Current.Parent != nil {
-				oldPath := m.Current.Path
+				oldNode := m.Current
 				m.Current = m.Current.Parent
 				m.Entries = m.Current.Children
 				m.sortEntries()
-				m.Path = m.Current.Path
-				
+				m.Path = m.Current.Path()
+
 				// Restore selection to the directory we just left
 				m.Selected = 0
 				for i, e := range m.Entries {
-					if e.Path == oldPath {
+					if e == oldNode {
 						m.Selected = i
 						break
 					}
@@ -259,9 +258,9 @@ func (m *Model) sortEntries() {
 		case SortSize:
 			res = m.Entries[i].Size > m.Entries[j].Size
 		case SortName:
-			res = m.Entries[i].Path < m.Entries[j].Path
+			res = m.Entries[i].Name < m.Entries[j].Name
 		case SortDate:
-			res = m.Entries[i].ModTime.After(m.Entries[j].ModTime)
+			res = m.Entries[i].ModTime > m.Entries[j].ModTime
 		}
 		if m.SortReverse {
 			return !res
@@ -394,7 +393,7 @@ func (m Model) View() string {
 				cursor = "> "
 			}
 			bar := cyanStyle.Render(renderBar(e.Size, maxSize, 10))
-			name := filepath.Base(e.Path)
+			name := e.Name
 			if e.IsDir {
 				name += "/"
 			}
