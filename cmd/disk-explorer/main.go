@@ -134,7 +134,7 @@ func writeSummary(w io.Writer, path string, opts scanner.ScanOptions, topN int) 
 		topFiles = scanner.TopFiles(root, topN)
 	}
 	di := getDiskInfo(path)
-	display.Summary(w, path, entries, topFiles, di, topN)
+	display.Summary(w, path, root, entries, topFiles, di, topN)
 }
 
 func runSummary(w io.Writer, path string, opts scanner.ScanOptions, topN int) {
