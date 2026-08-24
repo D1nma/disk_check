@@ -33,10 +33,11 @@ func (n *Node) Path() string {
 }
 
 type ScanProgress struct {
-	Files   int
-	Dirs    int
-	Size    int64
-	Current string
-	Done    bool
-	Root    *Node
+	Files    int
+	Dirs     int
+	Size     int64
+	Current  string
+	Done     bool
+	Root     *Node
+	TopFiles []*Node
 }

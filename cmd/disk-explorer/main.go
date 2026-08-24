@@ -113,17 +113,18 @@ func getDiskInfo(path string) display.DiskInfo {
 	}
 }
 
-func collectRoot(path string, opts scanner.ScanOptions) *scanner.Node {
+func collectRoot(path string, opts scanner.ScanOptions) scanner.ScanProgress {
 	ch := scanner.Scan(context.Background(), path, opts)
 	var lastProgress scanner.ScanProgress
 	for p := range ch {
 		lastProgress = p
 	}
-	return lastProgress.Root
+	return lastProgress
 }
 
 func writeSummary(w io.Writer, path string, opts scanner.ScanOptions, topN int) {
-	root := collectRoot(path, opts)
+	res := collectRoot(path, opts)
+	root := res.Root
 	var entries []*scanner.Node
 	var topFiles []*scanner.Node
 	if root != nil {
@@ -131,7 +132,11 @@ func writeSummary(w io.Writer, path string, opts scanner.ScanOptions, topN int) 
 			return root.Children[i].Size > root.Children[j].Size
 		})
 		entries = root.Children
-		topFiles = scanner.TopFiles(root, topN)
+		if topN <= len(res.TopFiles) {
+			topFiles = res.TopFiles[:topN]
+		} else {
+			topFiles = scanner.TopFiles(root, topN)
+		}
 	}
 	di := getDiskInfo(path)
 	display.Summary(w, path, root, entries, topFiles, di, topN)

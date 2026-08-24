@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"container/heap"
 	"context"
 	"os"
 	"path/filepath"
@@ -38,6 +39,21 @@ func joinPath(dir, name string) string {
 		return dir + name
 	}
 	return dir + string(os.PathSeparator) + name
+}
+
+type nodeArena struct {
+	cur []Node
+	i   int
+}
+
+func (a *nodeArena) new() *Node {
+	if a.i >= len(a.cur) {
+		a.cur = make([]Node, 1024)
+		a.i = 0
+	}
+	n := &a.cur[a.i]
+	a.i++
+	return n
 }
 
 // Scan builds a full Node tree and reports progress via ScanProgress.
@@ -87,8 +103,8 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 		taskCh := make(chan dirTask, nWorkers*4)
 		var taskWg sync.WaitGroup
 
-		var processDir func(path string, node *Node, isRoot bool)
-		processDir = func(path string, node *Node, isRoot bool) {
+		var processDir func(path string, node *Node, isRoot bool, arena *nodeArena)
+		processDir = func(path string, node *Node, isRoot bool, arena *nodeArena) {
 			defer taskWg.Done()
 			if ctx.Err() != nil {
 				return
@@ -106,20 +122,27 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 
 			localChildren := make([]*Node, 0, len(ents))
 			var leftover []dirTask
+			var localFiles, localDirs, localSize int64
+			hasExcludes := len(opts.Excludes) > 0
 
 			for _, ent := range ents {
 				if ctx.Err() != nil {
 					break
 				}
-				childPath := joinPath(path, ent.name)
-				if isExcluded(childPath, opts.Excludes) {
-					continue
-				}
 				if opts.SameDevice && rootDev != 0 && ent.dev != rootDev {
 					continue
 				}
 
-				child := &Node{
+				var childPath string
+				if ent.isDir || hasExcludes {
+					childPath = joinPath(path, ent.name)
+					if hasExcludes && isExcluded(childPath, opts.Excludes) {
+						continue
+					}
+				}
+
+				child := arena.new()
+				*child = Node{
 					Name:    ent.name,
 					IsDir:   ent.isDir,
 					ModTime: ent.modTime,
@@ -140,10 +163,10 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 					}
 					child.Size = sz
 					child.FileCount = 1
-					atomic.AddInt64(&totalFiles, 1)
-					atomic.AddInt64(&totalSize, sz)
+					localFiles++
+					localSize += sz
 				} else {
-					atomic.AddInt64(&totalDirs, 1)
+					localDirs++
 					taskWg.Add(1)
 					t := dirTask{childPath, child}
 					select {
@@ -154,9 +177,18 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 				}
 				localChildren = append(localChildren, child)
 			}
+			if localFiles != 0 {
+				atomic.AddInt64(&totalFiles, localFiles)
+			}
+			if localDirs != 0 {
+				atomic.AddInt64(&totalDirs, localDirs)
+			}
+			if localSize != 0 {
+				atomic.AddInt64(&totalSize, localSize)
+			}
 			node.Children = localChildren
 			for _, t := range leftover {
-				processDir(t.path, t.node, false)
+				processDir(t.path, t.node, false, arena)
 			}
 		}
 
@@ -192,8 +224,9 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			workerWg.Add(1)
 			go func() {
 				defer workerWg.Done()
+				var arena nodeArena
 				for t := range taskCh {
-					processDir(t.path, t.node, false)
+					processDir(t.path, t.node, false, &arena)
 				}
 			}()
 		}
@@ -203,23 +236,39 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			taskWg.Wait()
 			close(taskCh)
 		}()
-		processDir(abs, rootNode, true)
+		var rootArena nodeArena
+		processDir(abs, rootNode, true, &rootArena)
 		workerWg.Wait()
 		close(stopProgress)
 		progressWg.Wait()
 
-		var aggregate func(n *Node) (int64, int, int)
-		aggregate = func(n *Node) (int64, int, int) {
+		const topCap = 32
+		topH := &fileHeap{}
+		heap.Init(topH)
+		var aggregate func(n *Node)
+		aggregate = func(n *Node) {
 			if !n.IsDir {
-				return n.Size, 1, 0
+				if n.Size > 0 {
+					if topH.Len() < topCap {
+						heap.Push(topH, n)
+					} else if (*topH)[0].Size < n.Size {
+						heap.Pop(topH)
+						heap.Push(topH, n)
+					}
+				}
+				return
 			}
 			own := n.Size
 			var files int
 			var sz int64
 			for _, child := range n.Children {
-				s, f, _ := aggregate(child)
-				sz += s
-				files += f
+				aggregate(child)
+				sz += child.Size
+				if child.IsDir {
+					files += child.FileCount
+				} else {
+					files++
+				}
 			}
 			n.Size = own + sz
 			n.FileCount = files
@@ -230,18 +279,22 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 				}
 			}
 			n.DirCount = dirCount
-			return n.Size, n.FileCount, n.DirCount
 		}
 		aggregate(rootNode)
+		topFiles := make([]*Node, topH.Len())
+		for i := len(topFiles) - 1; i >= 0; i-- {
+			topFiles[i] = heap.Pop(topH).(*Node)
+		}
 
 		cur, _ := current.Load().(string)
 		ch <- ScanProgress{
-			Files:   int(atomic.LoadInt64(&totalFiles)),
-			Dirs:    int(atomic.LoadInt64(&totalDirs)),
-			Size:    rootNode.Size,
-			Current: cur,
-			Done:    true,
-			Root:    rootNode,
+			Files:    int(atomic.LoadInt64(&totalFiles)),
+			Dirs:     int(atomic.LoadInt64(&totalDirs)),
+			Size:     rootNode.Size,
+			Current:  cur,
+			Done:     true,
+			Root:     rootNode,
+			TopFiles: topFiles,
 		}
 	}()
 	return ch
