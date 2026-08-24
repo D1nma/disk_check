@@ -305,6 +305,39 @@ func TestNodePath(t *testing.T) {
 	}
 }
 
+func TestScanExclude(t *testing.T) {
+	tmp := t.TempDir()
+	keep := filepath.Join(tmp, "keep")
+	skip := filepath.Join(tmp, "skip")
+	if err := os.Mkdir(keep, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(skip, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keep, "a"), []byte("aa"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skip, "b"), []byte("bbbbbbbb"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var root *Node
+	for p := range Scan(context.Background(), tmp, ScanOptions{Excludes: []string{skip}}) {
+		if p.Done {
+			root = p.Root
+		}
+	}
+	if root == nil {
+		t.Fatal("no root")
+	}
+	for _, c := range root.Children {
+		if c.Name == "skip" {
+			t.Fatal("excluded dir still present")
+		}
+	}
+}
+
 func TestIsKernFS(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("kernfs skip is Linux-only")

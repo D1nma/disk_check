@@ -214,13 +214,12 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 				return n.Size, 1, 0
 			}
 			own := n.Size
-			var files, dirs int
+			var files int
 			var sz int64
 			for _, child := range n.Children {
-				s, f, d := aggregate(child)
+				s, f, _ := aggregate(child)
 				sz += s
 				files += f
-				dirs += d
 			}
 			n.Size = own + sz
 			n.FileCount = files
