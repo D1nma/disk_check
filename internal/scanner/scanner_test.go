@@ -173,14 +173,14 @@ func TestSizeAggregation(t *testing.T) {
 	nFile2 := findNode(root, filepath.Join(dir1, "file2"))
 	nFile3 := findNode(root, filepath.Join(dir2, "file3"))
 
-	if nDir2.Size != nFile3.Size {
-		t.Errorf("dir2 size mismatch: expected %d, got %d", nFile3.Size, nDir2.Size)
+	if nDir2.Size < nFile3.Size {
+		t.Errorf("dir2 size %d < file3 %d", nDir2.Size, nFile3.Size)
 	}
-	if nDir1.Size != nFile2.Size+nDir2.Size {
-		t.Errorf("dir1 size mismatch: expected %d, got %d", nFile2.Size+nDir2.Size, nDir1.Size)
+	if nDir1.Size < nFile2.Size+nDir2.Size {
+		t.Errorf("dir1 size %d < children %d", nDir1.Size, nFile2.Size+nDir2.Size)
 	}
-	if root.Size != nFile1.Size+nDir1.Size {
-		t.Errorf("root size mismatch: expected %d, got %d", nFile1.Size+nDir1.Size, root.Size)
+	if root.Size < nFile1.Size+nDir1.Size {
+		t.Errorf("root size %d < children %d", root.Size, nFile1.Size+nDir1.Size)
 	}
 
 	if root.FileCount != 3 {
@@ -303,6 +303,53 @@ func TestNodePath(t *testing.T) {
 	etc := &Node{Name: "etc", IsDir: true, Parent: slash}
 	if got := etc.Path(); got != "/etc" {
 		t.Errorf("slash join Path()=%q, want /etc", got)
+	}
+}
+
+func TestScanHardlinkCountedOnce(t *testing.T) {
+	tmp := t.TempDir()
+	a := filepath.Join(tmp, "a")
+	b := filepath.Join(tmp, "b")
+	if err := os.WriteFile(a, make([]byte, 4096), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(a, b); err != nil {
+		t.Fatal(err)
+	}
+
+	var root *Node
+	for p := range Scan(context.Background(), tmp, ScanOptions{}) {
+		if p.Done {
+			root = p.Root
+		}
+	}
+	if root == nil {
+		t.Fatal("no root")
+	}
+	var na, nb *Node
+	for _, c := range root.Children {
+		switch c.Name {
+		case "a":
+			na = c
+		case "b":
+			nb = c
+		}
+	}
+	if na == nil || nb == nil {
+		t.Fatalf("missing names: a=%v b=%v", na, nb)
+	}
+	if na.Size == 0 && nb.Size == 0 {
+		t.Fatal("both hardlink sizes are 0")
+	}
+	if na.Size > 0 && nb.Size > 0 {
+		t.Fatalf("hardlink counted twice: %d and %d", na.Size, nb.Size)
+	}
+}
+
+func TestWorkerCountBounds(t *testing.T) {
+	n := workerCount()
+	if n < 2 || n > 16 {
+		t.Fatalf("workerCount=%d want in [2,16]", n)
 	}
 }
 

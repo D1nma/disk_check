@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -11,15 +12,47 @@ import (
 	"time"
 )
 
+func workerCount() int {
+	n := runtime.GOMAXPROCS(0) * 2
+	if n > 16 {
+		return 16
+	}
+	if n < 2 {
+		return 2
+	}
+	return n
+}
+
+func isKernFS(fsType int64) bool { return false }
+
+type inodeKey struct {
+	dev uint64
+	ino uint64
+}
+
+type dirTask struct {
+	path string
+	node *Node
+}
+
+func joinPath(dir, name string) string {
+	if dir == string(os.PathSeparator) {
+		return dir + name
+	}
+	return dir + string(os.PathSeparator) + name
+}
+
 // Scan builds a full Node tree and reports progress via ScanProgress.
-// It uses a fixed worker pool (64 workers) to bound goroutine count,
-// avoiding unbounded goroutine creation on wide/deep filesystems.
 func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgress {
-	ch := make(chan ScanProgress, 128)
+	ch := make(chan ScanProgress, 16)
 	go func() {
 		defer close(ch)
 
-		rootInfo, err := os.Lstat(root)
+		abs, err := filepath.Abs(root)
+		if err != nil {
+			abs = root
+		}
+		rootInfo, err := os.Lstat(abs)
 		if err != nil {
 			return
 		}
@@ -31,170 +64,167 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			}
 		}
 
-		abs, absErr := filepath.Abs(root)
-		if absErr != nil {
-			abs = root
-		}
 		rootNode := &Node{
 			Name:    abs,
 			IsDir:   rootInfo.IsDir(),
 			ModTime: rootInfo.ModTime().Unix(),
 		}
-
-		type dirTask struct {
-			path string
-			node *Node
+		if !rootNode.IsDir {
+			rootNode.Size = blockSize(rootInfo)
+			rootNode.FileCount = 1
+			ch <- ScanProgress{Files: 1, Size: rootNode.Size, Done: true, Root: rootNode}
+			return
 		}
-
-		const numWorkers = 64
-		taskCh := make(chan dirTask, numWorkers*16)
 
 		var totalFiles int64
 		var totalDirs int64
 		var totalSize int64
-		var progressMu sync.Mutex
-		var lastReport time.Time
+		var current atomic.Value
+		current.Store(abs)
 
-		report := func(path string, final bool) {
-			progressMu.Lock()
-			now := time.Now()
-			if final || now.Sub(lastReport) > 50*time.Millisecond {
-				p := ScanProgress{
-					Files:   int(atomic.LoadInt64(&totalFiles)),
-					Dirs:    int(atomic.LoadInt64(&totalDirs)),
-					Size:    atomic.LoadInt64(&totalSize),
-					Current: path,
-					Done:    final,
-				}
-				if final {
-					p.Root = rootNode
-					ch <- p
-					lastReport = now
-				} else {
-					select {
-					case ch <- p:
-						lastReport = now
-					default:
-					}
-				}
-			}
-			progressMu.Unlock()
-		}
+		var seenMu sync.Mutex
+		seen := make(map[inodeKey]struct{})
 
+		nWorkers := workerCount()
+		taskCh := make(chan dirTask, nWorkers*4)
 		var taskWg sync.WaitGroup
 
-		// submit enqueues a directory task. If taskCh is full it spawns a
-		// lightweight relay goroutine (send-only, no I/O) rather than blocking
-		// the calling worker.
-		submit := func(t dirTask) {
-			taskWg.Add(1)
-			select {
-			case taskCh <- t:
-			default:
-				go func() {
-					select {
-					case taskCh <- t:
-					case <-ctx.Done():
-						taskWg.Done()
-					}
-				}()
-			}
-		}
-
-		processDir := func(path string, node *Node) {
+		var processDir func(path string, node *Node, isRoot bool)
+		processDir = func(path string, node *Node, isRoot bool) {
 			defer taskWg.Done()
+			if ctx.Err() != nil {
+				return
+			}
+			current.Store(path)
 
-			entries, err := os.ReadDir(path)
+			ents, dirSize, fsType, err := listDir(path)
 			if err != nil {
 				return
 			}
+			if !isRoot && isKernFS(fsType) {
+				return
+			}
+			node.Size = dirSize
 
-			localChildren := make([]*Node, 0, len(entries))
-			defer func() {
-				node.Children = localChildren
-			}()
+			localChildren := make([]*Node, 0, len(ents))
+			var leftover []dirTask
 
-			for _, entry := range entries {
+			for _, ent := range ents {
 				if ctx.Err() != nil {
-					return
+					break
 				}
-
-				name := entry.Name()
-				childPath := path + string(os.PathSeparator) + name
+				childPath := joinPath(path, ent.name)
 				if isExcluded(childPath, opts.Excludes) {
 					continue
 				}
-
-				info, err := entry.Info()
-				if err != nil {
+				if opts.SameDevice && rootDev != 0 && ent.dev != rootDev {
 					continue
 				}
 
-				if opts.SameDevice && rootDev != 0 {
-					if st, ok := info.Sys().(*syscall.Stat_t); ok && uint64(st.Dev) != rootDev {
-						continue
-					}
-				}
-
 				child := &Node{
-					Name:    name,
-					IsDir:   entry.IsDir(),
-					ModTime: info.ModTime().Unix(),
+					Name:    ent.name,
+					IsDir:   ent.isDir,
+					ModTime: ent.modTime,
 					Parent:  node,
 				}
-				localChildren = append(localChildren, child)
 
-				if !entry.IsDir() {
-					sz := blockSize(info)
+				if !ent.isDir {
+					sz := ent.size
+					if ent.nlink > 1 {
+						k := inodeKey{ent.dev, ent.ino}
+						seenMu.Lock()
+						if _, ok := seen[k]; ok {
+							sz = 0
+						} else {
+							seen[k] = struct{}{}
+						}
+						seenMu.Unlock()
+					}
 					child.Size = sz
 					child.FileCount = 1
 					atomic.AddInt64(&totalFiles, 1)
 					atomic.AddInt64(&totalSize, sz)
 				} else {
 					atomic.AddInt64(&totalDirs, 1)
-					submit(dirTask{childPath, child})
+					taskWg.Add(1)
+					t := dirTask{childPath, child}
+					select {
+					case taskCh <- t:
+					default:
+						leftover = append(leftover, t)
+					}
 				}
-
-				if atomic.LoadInt64(&totalFiles)%100 == 0 {
-					report(childPath, false)
-				}
+				localChildren = append(localChildren, child)
+			}
+			node.Children = localChildren
+			for _, t := range leftover {
+				processDir(t.path, t.node, false)
 			}
 		}
 
+		stopProgress := make(chan struct{})
+		var progressWg sync.WaitGroup
+		progressWg.Add(1)
+		go func() {
+			defer progressWg.Done()
+			tick := time.NewTicker(100 * time.Millisecond)
+			defer tick.Stop()
+			for {
+				select {
+				case <-stopProgress:
+					return
+				case <-tick.C:
+					cur, _ := current.Load().(string)
+					p := ScanProgress{
+						Files:   int(atomic.LoadInt64(&totalFiles)),
+						Dirs:    int(atomic.LoadInt64(&totalDirs)),
+						Size:    atomic.LoadInt64(&totalSize),
+						Current: cur,
+					}
+					select {
+					case ch <- p:
+					default:
+					}
+				}
+			}
+		}()
+
 		var workerWg sync.WaitGroup
-		for i := 0; i < numWorkers; i++ {
+		for i := 0; i < nWorkers; i++ {
 			workerWg.Add(1)
 			go func() {
 				defer workerWg.Done()
-				for task := range taskCh {
-					processDir(task.path, task.node)
+				for t := range taskCh {
+					processDir(t.path, t.node, false)
 				}
 			}()
 		}
 
-		submit(dirTask{root, rootNode})
+		taskWg.Add(1)
 		go func() {
 			taskWg.Wait()
 			close(taskCh)
 		}()
-
+		processDir(abs, rootNode, true)
 		workerWg.Wait()
+		close(stopProgress)
+		progressWg.Wait()
 
-		// Post-scan aggregation: compute cumulative sizes and counts in O(N).
 		var aggregate func(n *Node) (int64, int, int)
 		aggregate = func(n *Node) (int64, int, int) {
 			if !n.IsDir {
 				return n.Size, 1, 0
 			}
-			var sz int64
+			own := n.Size
 			var files, dirs int
+			var sz int64
 			for _, child := range n.Children {
 				s, f, d := aggregate(child)
 				sz += s
 				files += f
 				dirs += d
 			}
-			n.Size = sz
+			n.Size = own + sz
 			n.FileCount = files
 			dirCount := 0
 			for _, child := range n.Children {
@@ -207,7 +237,15 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 		}
 		aggregate(rootNode)
 
-		report(root, true)
+		cur, _ := current.Load().(string)
+		ch <- ScanProgress{
+			Files:   int(atomic.LoadInt64(&totalFiles)),
+			Dirs:    int(atomic.LoadInt64(&totalDirs)),
+			Size:    rootNode.Size,
+			Current: cur,
+			Done:    true,
+			Root:    rootNode,
+		}
 	}()
 	return ch
 }
