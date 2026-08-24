@@ -305,3 +305,43 @@ func TestNodePath(t *testing.T) {
 		t.Errorf("slash join Path()=%q, want /etc", got)
 	}
 }
+
+func TestListDir(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "file.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(tmp, "sub")
+	if err := os.Mkdir(sub, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	ents, dirSize, _, err := listDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirSize < 0 {
+		t.Fatalf("dirSize=%d", dirSize)
+	}
+	var sawFile, sawDir bool
+	for _, e := range ents {
+		switch e.name {
+		case "file.txt":
+			sawFile = true
+			if e.isDir {
+				t.Error("file.txt should not be a dir")
+			}
+			if e.size <= 0 {
+				t.Errorf("file.txt size=%d", e.size)
+			}
+		case "sub":
+			sawDir = true
+			if !e.isDir {
+				t.Error("sub should be a dir")
+			}
+		}
+	}
+	if !sawFile || !sawDir {
+		t.Fatalf("missing entries: file=%v dir=%v (n=%d)", sawFile, sawDir, len(ents))
+	}
+}
