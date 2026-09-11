@@ -1,33 +1,71 @@
-# Repository Guidelines
+# Repository Guidelines — disk-explorer (disk_check)
 
-## Project Structure & Module Organization
+High-performance disk usage analyzer and interactive TUI written in Go with a standalone Bash bootstrap fallback and remote SSH scanning capabilities.
 
-This repository builds `disk-explorer`, a Go TUI with a Bash bootstrap and fallback. The Go entry point is `cmd/disk-explorer/main.go`. Internal packages live under `internal/`: `scanner/` handles high-performance parallel recursive scanning, `tui/` contains Bubble Tea UI logic with instant O(1) navigation, `remote/` handles native SSH scanning, and `assets/` embeds the Bash fallback.
- The modular Bash implementation is in `src/`; `build.sh` concatenates it into `disk-explorer.sh` and syncs the generated copy to `internal/assets/disk-explorer.sh`. Shell smoke and unit tests live in `tests/`. Design notes and implementation plans are under `docs/superpowers/`.
+---
 
-## Build, Test, and Development Commands
+## 1. Project Structure & Module Organization
 
-- `go test ./...` runs all Go package tests.
-- `go build ./cmd/disk-explorer` builds the Go CLI locally.
-- `./build.sh` regenerates `disk-explorer.sh` from `src/*.sh` and validates Bash syntax.
-- `tests/run_tests.sh` runs Bash smoke tests against the generated wrapper.
-- `./disk-explorer.sh /path` runs the explorer against a local path.
-- `./disk-explorer.sh --bash /path` forces the Bash fallback.
+- **Go CLI entry point**: `cmd/disk-explorer/main.go`
+- **Internal packages** (`internal/`):
+  - `scanner/`: High-performance parallel recursive filesystem scanning with worker pools and atomic metrics.
+  - `tui/`: Bubble Tea TUI with instant O(1) directory navigation, sorting, and filtering.
+  - `remote/`: Native SSH remote disk scanning without installing dependencies on remote hosts.
+  - `assets/`: Embeds the standalone Bash fallback script (`internal/assets/disk-explorer.sh`).
+- **Bash implementation** (`src/`):
+  - Modular scripts assembled by `build.sh` into the single-file distributable `disk-explorer.sh`.
+- **Tests**: Go unit tests beside packages (`*_test.go`), Bash smoke tests in `tests/run_tests.sh`.
 
-Run `./build.sh` after editing files in `src/` so the distributable wrapper and embedded asset stay in sync.
+---
 
-## Coding Style & Naming Conventions
+## 2. Build, Test, and Development Commands
 
-Format Go code with `gofmt`; keep package names short and lowercase. Use exported names only for cross-package APIs and keep tests beside the package they cover, for example `internal/scanner/scanner_test.go`. Bash scripts use `#!/usr/bin/env bash`, `set -euo pipefail` where appropriate, lowercase function names, and uppercase global configuration variables such as `REMOTE_HOSTS` or `SORT_MODE`.
+### Build & Verification (Mandatory before opening PR)
+```bash
+go test ./...                  # Run all Go package unit tests
+go build ./cmd/disk-explorer   # Build the Go binary locally
+./build.sh                     # Rebuild standalone disk-explorer.sh & sync embedded assets
+tests/run_tests.sh             # Run Bash smoke tests
+```
 
-## Testing Guidelines
+*Note: Always run `./build.sh` after editing files in `src/` to ensure the generated shell script and Go embedded asset stay in sync.*
 
-Prefer focused Go tests for scanner, TUI model, and remote behavior. Name Go tests `TestSomethingSpecific`. Bash tests should cover generated-script behavior, portability, and helper functions; keep reusable checks in `tests/run_tests.sh` or Bats files under `tests/`. Before submitting, run `go test ./...`, `./build.sh`, and `tests/run_tests.sh`.
+---
 
-## Commit & Pull Request Guidelines
+## 3. Coding Style & Conventions
 
-Recent history uses concise imperative commits, often Conventional Commit style such as `feat: add bootstrap wrapper` or scoped messages like `feat(tui): optimize performance`. Follow that pattern. Pull requests should describe the user-visible change, list validation commands run, link related issues, and include terminal screenshots or recordings when TUI behavior changes.
+- Format Go code strictly with `gofmt`.
+- Keep package names short and lowercase. Export only necessary APIs.
+- Bash scripts use `#!/usr/bin/env bash`, `set -euo pipefail`, lowercase function names, and uppercase global config variables.
+- Untrusted input (file paths, remote hosts) must never be evaluated in raw shell execution.
 
-## Security & Configuration Tips
+---
 
-Treat remote host input as untrusted. Preserve validation in `internal/remote/` and `src/remote.sh`, avoid shell evaluation of host strings, and do not commit generated binaries or local machine paths.
+## 4. Jules 360° Audit & Review Guidelines
+
+When reviewing, maintaining, or generating optimizations for this repository, Jules MUST inspect code across these 6 core dimensions:
+
+### 🛡️ 1. Sécurité & Injection de Commandes (Security / Sentinel)
+- **SSH & Remote Host Injection**: Remote hostnames, SSH ports, and scan paths in `internal/remote/` and `src/remote.sh` must be strictly sanitized. Never interpolate unsanitized strings directly into `exec.Command("ssh", ...)` or `eval`.
+- **Symlink Traversal & Directory Traversal**: Prevent infinite recursion on circular symlinks (`scanner` must track visited inodes or respect symlink following flags).
+- **Filesystem Permissions**: The scanner should gracefully handle `EACCES` / permission-denied errors on restricted directories without aborting the scan.
+
+### ⚡ 2. Performance & Optimisation Concurrente (Performance / Bolt)
+- **Parallel Scanning & Goroutine Pools**: File scanning must use bounded worker pools or semaphore channels to avoid spawning millions of goroutines and exhausting file descriptors.
+- **Slice & Buffer Reallocation**: Minimize memory allocations during directory walks (`filepath.WalkDir` instead of `filepath.Walk`). Re-use slices and string builders where possible.
+- **Bubble Tea TUI Responsiveness**: Navigation and sorting of large directory trees (100k+ files) must remain O(1) or cached; do not block the Bubble Tea update loop with heavy computations.
+
+### 🧩 3. Robustesse & Résilience (Reliability & Portability)
+- **Bash Fallback Portability**: The generated `disk-explorer.sh` must run on minimal Linux environments (Busybox, coreutils, older bash 4.x) without requiring external dependencies like `jq` or `awk` extensions.
+- **Terminal Resize Handling**: Bubble Tea TUI must cleanly adapt to window resize events (`tea.WindowSizeMsg`) without panic or garbled rendering.
+
+### 🧹 4. Qualité de Code & Synchronisation (Clean Code)
+- Keep Go packages cohesive and decouple scanner logic from TUI representation.
+- Ensure `build.sh` validates syntax (`bash -n`) before assembling `disk-explorer.sh`.
+
+### 🧪 5. Tests & Non-Régression (Test Coverage)
+- Scanner speed, sorting algorithms, and remote string parsing must be covered by Go unit tests.
+- All Go tests (`go test ./...`) and Bash tests must pass.
+
+### 📦 6. Déploiement & Binaire Autonome (Zero-Dependency Delivery)
+- The compiled Go binary must have zero runtime CGO dependencies (`CGO_ENABLED=0` for static cross-platform portability).
