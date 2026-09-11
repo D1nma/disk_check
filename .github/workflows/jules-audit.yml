@@ -2,8 +2,8 @@ name: Jules 360 Audit & Verification
 
 on:
   schedule:
-    # Weekly audit on Sunday at 07:00 UTC
-    - cron: '0 7 * * 0'
+    # Weekly audit every Thursday at 04:17 UTC (one repo per weekday to spread the daily Jules quota)
+    - cron: '17 4 * * 4'
   workflow_dispatch:
   issues:
     types: [labeled]
