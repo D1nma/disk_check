@@ -1,0 +1,30 @@
+name: Jules 360 Audit & Verification
+
+on:
+  schedule:
+    # Weekly audit on Sunday at 07:00 UTC
+    - cron: '0 7 * * 0'
+  workflow_dispatch:
+  issues:
+    types: [labeled]
+
+jobs:
+  jules-audit:
+    if: github.event_name != 'issues' || github.event.label.name == 'jules'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - name: Invoke Jules 360 Agent
+        uses: google-labs-code/jules-invoke@v1
+        with:
+          jules_api_key: ${{ secrets.JULES_API_KEY }}
+          prompt: |
+            Perform a 360° audit of disk-explorer following guidelines in AGENTS.md and memory in .jules/:
+            - Security (Sentinel): safe escaping for remote SSH arguments, circular symlink protection.
+            - Performance (Bolt): filepath.WalkDir usage, bounded worker pools for parallel directory scanning, O(1) TUI updates.
+            - Reliability: standalone Bash fallback portability, terminal resize handling.
+            - Quality: build.sh synchronization between src/ and embedded assets.
+            - Tests: run `go test ./...` and `tests/run_tests.sh`.
+            Implement a safe optimization or fix and open a PR.
