@@ -82,6 +82,9 @@ disk-explorer --mode partition /
 # Print top directories and files to stdout
 disk-explorer --summary /var
 
+# Skip one or more paths from the Go scan (options precede PATH)
+disk-explorer --summary --exclude /var/cache --exclude /var/tmp /var
+
 # Write a timestamped report to a file
 disk-explorer --report /var
 disk-explorer --report --report-dir ~/reports /var

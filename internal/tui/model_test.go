@@ -65,6 +65,42 @@ func TestModelSortEntriesByReverseSize(t *testing.T) {
 	}
 }
 
+func TestSortReverseEqualValuesDeterministic(t *testing.T) {
+	m := Model{
+		Entries: []*scanner.Node{
+			{Name: "z", Size: 10},
+			{Name: "a", Size: 10},
+			{Name: "m", Size: 10},
+		},
+		SortBy:      SortSize,
+		SortReverse: true,
+	}
+	m.sortEntries()
+	for i, want := range []string{"z", "m", "a"} {
+		if m.Entries[i].Name != want {
+			t.Fatalf("entry %d = %q, want %q", i, m.Entries[i].Name, want)
+		}
+	}
+}
+
+func TestNavigationRestoresCachedDirectoryView(t *testing.T) {
+	root := &scanner.Node{Name: "/data", IsDir: true}
+	child := &scanner.Node{Name: "sub", IsDir: true, Size: 100, Parent: root}
+	root.Children = []*scanner.Node{{Name: "small", Size: 1, Parent: root}, child}
+	m := Model{State: StateBrowsing, Current: root, Entries: root.Children, Height: 24}
+	m.sortEntries()
+	if m.maxSize != 100 {
+		t.Fatalf("maxSize = %d, want 100", m.maxSize)
+	}
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = model.(Model)
+	if m.maxSize != 100 || m.Current != root || m.Entries[m.Selected] != child {
+		t.Fatalf("parent view not restored: max=%d selected=%d", m.maxSize, m.Selected)
+	}
+}
+
 func TestModelNavigation(t *testing.T) {
 	root := &scanner.Node{Name: "/", IsDir: true}
 	child := &scanner.Node{Name: "child", IsDir: true, Parent: root}

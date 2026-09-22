@@ -57,6 +57,12 @@ const (
 	StateBrowsing
 )
 
+type directoryView struct {
+	sortBy      SortKey
+	sortReverse bool
+	maxSize     int64
+}
+
 type Model struct {
 	Path        string
 	Version     string
@@ -74,6 +80,9 @@ type Model struct {
 	SortBy      SortKey
 	SortReverse bool
 	ScanOpts    scanner.ScanOptions
+	views       map[*scanner.Node]directoryView
+	parentIndex map[*scanner.Node]int
+	maxSize     int64
 
 	Progress scanner.ScanProgress
 
@@ -121,6 +130,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.State = StateBrowsing
 			m.Root = msg.progress.Root
 			m.Current = msg.progress.Root
+			if m.Current == nil {
+				return m, nil
+			}
 			m.Entries = m.Current.Children
 			m.sortEntries()
 			return m, nil
@@ -192,9 +204,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if len(m.Entries) > 0 && m.Entries[m.Selected].IsDir {
 				selectedChild := m.Entries[m.Selected]
+				if m.parentIndex == nil {
+					m.parentIndex = make(map[*scanner.Node]int)
+				}
+				m.parentIndex[selectedChild] = m.Selected
 				m.Current = selectedChild
 				m.Entries = m.Current.Children
-				m.sortEntries()
+				m.restoreEntries()
 				m.Path = m.Current.Path()
 				m.Selected = 0
 				m.Offset = 0
@@ -209,15 +225,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				oldNode := m.Current
 				m.Current = m.Current.Parent
 				m.Entries = m.Current.Children
-				m.sortEntries()
+				cachedOrder := m.restoreEntries()
 				m.Path = m.Current.Path()
 
 				// Restore selection to the directory we just left
 				m.Selected = 0
-				for i, e := range m.Entries {
-					if e == oldNode {
-						m.Selected = i
-						break
+				if index, ok := m.parentIndex[oldNode]; cachedOrder && ok {
+					m.Selected = index
+				} else {
+					for i, e := range m.Entries {
+						if e == oldNode {
+							m.Selected = i
+							break
+						}
 					}
 				}
 				m.clampScroll()
@@ -256,21 +276,58 @@ func (m Model) listHeight() int {
 }
 
 func (m *Model) sortEntries() {
-	sort.SliceStable(m.Entries, func(i, j int) bool {
-		var res bool
+	var maxSize int64
+	for _, e := range m.Entries {
+		if e.Size > maxSize {
+			maxSize = e.Size
+		}
+	}
+	m.maxSize = maxSize
+	sort.Slice(m.Entries, func(i, j int) bool {
+		a, b := m.Entries[i], m.Entries[j]
+		var cmp int
 		switch m.SortBy {
 		case SortSize:
-			res = m.Entries[i].Size > m.Entries[j].Size
+			cmp = compareInt64(a.Size, b.Size)
 		case SortName:
-			res = m.Entries[i].Name < m.Entries[j].Name
+			cmp = strings.Compare(b.Name, a.Name)
 		case SortDate:
-			res = m.Entries[i].ModTime > m.Entries[j].ModTime
+			cmp = compareInt64(a.ModTime, b.ModTime)
+		}
+		if cmp == 0 {
+			cmp = strings.Compare(b.Name, a.Name)
 		}
 		if m.SortReverse {
-			return !res
+			return cmp < 0
 		}
-		return res
+		return cmp > 0
 	})
+	if m.Current != nil {
+		if m.views == nil {
+			m.views = make(map[*scanner.Node]directoryView)
+		}
+		m.views[m.Current] = directoryView{m.SortBy, m.SortReverse, maxSize}
+	}
+}
+
+func compareInt64(a, b int64) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func (m *Model) restoreEntries() bool {
+	if view, ok := m.views[m.Current]; ok && view.sortBy == m.SortBy && view.sortReverse == m.SortReverse {
+		m.maxSize = view.maxSize
+		return true
+	}
+	m.sortEntries()
+	return false
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────────
@@ -395,13 +452,6 @@ func (m Model) View() string {
 	} else {
 		// Entry list
 		visible := m.listHeight()
-		var maxSize int64
-		for _, e := range m.Entries {
-			if e.Size > maxSize {
-				maxSize = e.Size
-			}
-		}
-
 		if len(m.Entries) == 0 {
 			b.WriteString(dimStyle.Render("  (vide)") + "\n")
 		}
@@ -412,7 +462,7 @@ func (m Model) View() string {
 			if i == m.Selected {
 				cursor = "> "
 			}
-			bar := cyanStyle.Render(renderBar(e.Size, maxSize, 10))
+			bar := cyanStyle.Render(renderBar(e.Size, m.maxSize, 10))
 			name := e.Name
 			if e.IsDir {
 				name += "/"

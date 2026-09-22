@@ -24,7 +24,9 @@ run_suite() {
   local tag="$1"
   echo "=== $tag  target=$TARGET ==="
   time_cmd "ncdu 1-thread" ncdu -0 -o /dev/null "$TARGET"
-  time_cmd "ncdu -t ${nproc_n}" ncdu -0 -o /dev/null -t "$nproc_n" "$TARGET"
+  if ncdu --help 2>&1 | grep -q -- '-t N'; then
+    time_cmd "ncdu -t ${nproc_n}" ncdu -0 -o /dev/null -t "$nproc_n" "$TARGET"
+  fi
   time_cmd "disk-explorer --summary" "$BIN" --summary "$TARGET"
 }
 

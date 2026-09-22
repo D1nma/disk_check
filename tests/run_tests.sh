@@ -3,6 +3,9 @@
 # Source the script to get access to functions
 source "$(dirname "$0")/../disk-explorer.sh"
 
+# Cursor tests call drawing helpers without initializing the terminal.
+COLUMNS=80
+
 failed=0
 total=0
 

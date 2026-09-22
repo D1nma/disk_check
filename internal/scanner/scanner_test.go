@@ -199,9 +199,9 @@ func TestTopFiles(t *testing.T) {
 		size int
 	}{
 		{"small", 10},
-		{"medium", 100},
-		{"large", 1000},
-		{"huge", 10000},
+		{"medium", 8 * 1024},
+		{"large", 256 * 1024},
+		{"huge", 1024 * 1024},
 	}
 	for _, f := range files {
 		if err := os.WriteFile(filepath.Join(tmp, f.name), make([]byte, f.size), 0644); err != nil {

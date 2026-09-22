@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"syscall"
 	"time"
 
@@ -24,7 +23,7 @@ var version = "dev"
 func main() {
 	var (
 		mode        string
-		excludeFlag string
+		excludes    []string
 		doSummary   bool
 		doReport    bool
 		doTree      bool
@@ -38,6 +37,17 @@ func main() {
 	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
 	flag.BoolVar(&doUpdate, "update", false, "Download the latest release and exit")
 	flag.StringVar(&mode, "mode", "global", "Analysis mode: global (all filesystems) or partition (same device only)")
+	flag.Func("exclude", "Absolute or relative path to skip (repeatable)", func(path string) error {
+		if path == "" {
+			return fmt.Errorf("exclude path cannot be empty")
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return err
+		}
+		excludes = append(excludes, abs)
+		return nil
+	})
 	flag.BoolVar(&doSummary, "summary", false, "Print disk summary and exit")
 	flag.BoolVar(&doReport, "report", false, "Write report to file and exit")
 	flag.BoolVar(&doTree, "tree", false, "Print tree view and exit")
@@ -66,16 +76,6 @@ func main() {
 			os.Exit(1)
 		}
 		return
-	}
-
-	var excludes []string
-	if excludeFlag != "" {
-		excludes = strings.Split(excludeFlag, ",")
-	}
-	for i, arg := range os.Args[1:] {
-		if (arg == "--exclude" || arg == "-exclude") && i+1 < len(os.Args)-1 {
-			excludes = append(excludes, os.Args[i+2])
-		}
 	}
 
 	path := "."
