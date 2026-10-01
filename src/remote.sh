@@ -95,10 +95,13 @@ remote_run_host() {
     --max-depth   "$MAX_DEPTH"
   )
 
+  local safe_args
+  safe_args=$(printf '%q ' "${remote_args[@]}")
+
   local rc=0
   # Le script est pipé via stdin ; bash -s passe les arguments suivant "--"
   # comme $@ au script distant (évite une copie temporaire avec scp).
-  ssh "${ssh_opts[@]}" "$host" bash -s -- "${remote_args[@]}" \
+  ssh "${ssh_opts[@]}" "$host" "bash -s -- $safe_args" \
     < "$_SCRIPT_SELF" \
     > "$out_file"     \
     2> "$err_file"    \
