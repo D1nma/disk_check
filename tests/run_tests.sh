@@ -40,17 +40,17 @@ assert_true '
 ' "build.sh: produit un fichier syntaxiquement valide"
 
 assert_true '
-  "$(dirname "$0")/../disk-explorer.sh" --self-check >/dev/null 2>&1
+  "$(dirname "$0")/../disk-explorer.sh" --bash --self-check >/dev/null 2>&1
 ' "disk-explorer.sh --self-check: exit 0"
 
 assert_true '
-  "$(dirname "$0")/../disk-explorer.sh" --summary /tmp >/dev/null 2>&1
+  "$(dirname "$0")/../disk-explorer.sh" --bash --summary /tmp >/dev/null 2>&1
   rc=$?
   [[ $rc -eq 0 || $rc -eq 2 ]]
 ' "disk-explorer.sh --summary /tmp: exit 0 ou 2"
 
 assert_true '
-  echo "" | "$(dirname "$0")/../disk-explorer.sh" /tmp >/dev/null 2>&1
+  echo "" | "$(dirname "$0")/../disk-explorer.sh" --bash /tmp >/dev/null 2>&1
   rc=$?
   [[ $rc -eq 0 || $rc -eq 2 ]]
 ' "disk-explorer.sh: bascule en summary quand stdin n'est pas un TTY (exit 0 ou 2)"
