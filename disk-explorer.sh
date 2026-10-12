@@ -24,7 +24,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="bfc539b"
+VERSION="3bedd9f"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -2632,13 +2632,17 @@ download_binary() {
     if [[ -n "$sha_cmd" ]]; then
         local sums_file="${target}.sha256sums"
         local expected actual
+        local fetched=0
         if command -v curl >/dev/null 2>&1; then
-            curl -SLf "$sums_url" -o "$sums_file" 2>/dev/null
+            curl -SLf "$sums_url" -o "$sums_file" 2>/dev/null && fetched=1
         else
-            wget -q "$sums_url" -O "$sums_file" 2>/dev/null
-        fi || { rm -f "$tmp" "$sums_file"
-                printf "Erreur: impossible de récupérer SHA256SUMS pour %s\n" "$name" >&2
-                return 1; }
+            wget -q "$sums_url" -O "$sums_file" 2>/dev/null && fetched=1
+        fi
+        if (( ! fetched )); then
+            rm -f "$tmp" "$sums_file"
+            printf "Erreur: impossible de récupérer SHA256SUMS pour %s\n" "$name" >&2
+            return 1
+        fi
         expected=$(awk -v n="$name" '$2 == n {print $1}' "$sums_file")
         if [[ -z "$expected" ]]; then
             rm -f "$tmp" "$sums_file"
