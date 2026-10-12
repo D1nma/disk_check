@@ -24,7 +24,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="v2.1.0"
+VERSION="bfc539b"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -2373,7 +2373,9 @@ remote_resolve_hosts() {
 # remote_validate_host HOST
 #   Refuse les noms d'hôtes contenant des métacaractères shell susceptibles
 #   de causer une injection de commande.
-#   Format accepté : [user@]hostname[:port] — alphanum, tirets, points, @, :
+#   Format accepté : [user@]hostname[:port] — alphanum, tirets, points, @,
+#   port numérique optionnel. Ne doit pas commencer par '-' (sinon ssh
+#   interpréterait le nom comme une option).
 #   Note : les adresses IPv6 littérales ex. [::1] ne sont pas supportées
 #   directement ; utiliser --remote-ssh-opt "-o Hostname=::1" à la place.
 #
@@ -2383,7 +2385,9 @@ remote_resolve_hosts() {
 remote_validate_host() {
   local host="$1"
   [[ -z "$host" ]] && die "hôte vide dans la liste"
-  [[ "$host" =~ ^[a-zA-Z0-9@:._-]+$ ]] \
+  [[ "$host" != -* ]] \
+    || die "hôte invalide (ne doit pas commencer par '-') : '$host'"
+  [[ "$host" =~ ^[a-zA-Z0-9._@-]+(:[0-9]+)?$ ]] \
     || die "hôte invalide (caractères non autorisés) : '$host'"
 }
 
@@ -2403,11 +2407,19 @@ remote_validate_host() {
 remote_run_host() {
   local host="$1" out_file="$2" err_file="$3" status_file="$4"
 
+  # host:port -> destination "host" + option -p port (le port suit le dernier ':' après '@')
+  local target="$host" port="" hostpart="${host##*@}"
+  if [[ "$hostpart" == *:* ]]; then
+    port="${hostpart##*:}"
+    target="${host%:"$port"}"
+  fi
+
   local -a ssh_opts=(
     -o "ConnectTimeout=${REMOTE_TIMEOUT}"
     -o "BatchMode=yes"
     -o "StrictHostKeyChecking=accept-new"
   )
+  [[ -n "$port" ]] && ssh_opts+=(-p "$port")
   (( ${#REMOTE_SSH_OPTS[@]} > 0 )) && ssh_opts+=("${REMOTE_SSH_OPTS[@]}")
 
   # Options de scan propagées vers la machine distante
@@ -2426,7 +2438,7 @@ remote_run_host() {
   local rc=0
   # Le script est pipé via stdin ; bash -s passe les arguments suivant "--"
   # comme $@ au script distant (évite une copie temporaire avec scp).
-  ssh "${ssh_opts[@]}" "$host" bash -s -- "${remote_args[@]}" \
+  ssh "${ssh_opts[@]}" "$target" bash -s -- "${remote_args[@]}" \
     < "$_SCRIPT_SELF" \
     > "$out_file"     \
     2> "$err_file"    \
@@ -2578,31 +2590,18 @@ try_go_binary() {
     arch=$(get_arch)
     binary="${CACHE_DIR}/disk-explorer"
 
-    # Use cached binary if present and valid
+    # Only tagged releases use the Go binary (VERSION must start with v + digit).
+    # Untagged/dev builds run the Bash implementation, as the README documents.
+    [[ "$VERSION" =~ ^v[0-9] ]] || return
+
     if [[ -x "$binary" ]]; then
         exec "$binary" "$@"
     fi
 
-    # Only attempt download for tagged releases (VERSION must start with v + digit)
-    if [[ "$VERSION" =~ ^v[0-9] ]]; then
-        if download_binary "$os" "$arch" "$binary" 2>&1; then
-            [[ -x "$binary" ]] && exec "$binary" "$@"
-        else
-            printf "Info: téléchargement échoué, utilisation du mode bash\n" >&2
-        fi
-        return
-    fi
-
-    # Dev environment: try building locally with Go
-    if command -v go >/dev/null 2>&1; then
-        local src_dir
-        src_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
-        if [[ -f "$src_dir/go.mod" ]]; then
-            mkdir -p "$(dirname "$binary")"
-            if go build -o "$binary" "$src_dir/cmd/disk-explorer" 2>/dev/null; then
-                exec "$binary" "$@"
-            fi
-        fi
+    if download_binary "$os" "$arch" "$binary" 2>&1; then
+        [[ -x "$binary" ]] && exec "$binary" "$@"
+    else
+        printf "Info: téléchargement échoué, utilisation du mode bash\n" >&2
     fi
 }
 
@@ -2632,25 +2631,28 @@ download_binary() {
     command -v shasum    >/dev/null 2>&1 && [[ -z "$sha_cmd" ]] && sha_cmd="shasum -a 256"
     if [[ -n "$sha_cmd" ]]; then
         local sums_file="${target}.sha256sums"
+        local expected actual
         if command -v curl >/dev/null 2>&1; then
-            curl -SLf "$sums_url" -o "$sums_file" 2>/dev/null || true
+            curl -SLf "$sums_url" -o "$sums_file" 2>/dev/null
         else
-            wget -q "$sums_url" -O "$sums_file" 2>/dev/null || true
+            wget -q "$sums_url" -O "$sums_file" 2>/dev/null
+        fi || { rm -f "$tmp" "$sums_file"
+                printf "Erreur: impossible de récupérer SHA256SUMS pour %s\n" "$name" >&2
+                return 1; }
+        expected=$(awk -v n="$name" '$2 == n {print $1}' "$sums_file")
+        if [[ -z "$expected" ]]; then
+            rm -f "$tmp" "$sums_file"
+            printf "Erreur: aucune somme SHA256 pour %s\n" "$name" >&2
+            return 1
         fi
-        if [[ -s "$sums_file" ]]; then
-            local expected actual
-            expected=$(grep "${name}$" "$sums_file" | awk '{print $1}')
-            if [[ -n "$expected" ]]; then
-                actual=$(eval "$sha_cmd" "$tmp" | awk '{print $1}')
-                if [[ "$actual" != "$expected" ]]; then
-                    rm -f "$tmp" "$sums_file"
-                    printf "Erreur: checksum SHA256 invalide pour %s\n" "$name" >&2
-                    return 1
-                fi
-                printf "Checksum OK\n" >&2
-            fi
-        fi
+        actual=$($sha_cmd "$tmp" | awk '{print $1}')
         rm -f "$sums_file"
+        if [[ "$actual" != "$expected" ]]; then
+            rm -f "$tmp"
+            printf "Erreur: checksum SHA256 invalide pour %s\n" "$name" >&2
+            return 1
+        fi
+        printf "Checksum OK\n" >&2
     fi
 
     mv "$tmp" "$target"

@@ -36,8 +36,13 @@ assert_false() {
 echo "Running build smoke tests..."
 
 assert_true '
-  (cd "$(dirname "$0")/.." && ./build.sh >/dev/null 2>&1 && bash -n disk-explorer.sh)
-' "build.sh: produit un fichier syntaxiquement valide"
+  _bt_tmp=$(mktemp -d)
+  cp "$(dirname "$0")/../build.sh" "$_bt_tmp/" && cp -r "$(dirname "$0")/../src" "$_bt_tmp/"
+  (cd "$_bt_tmp" && ./build.sh >/dev/null 2>&1 && bash -n disk-explorer.sh)
+  _bt_rc=$?
+  rm -rf "$_bt_tmp"
+  [[ $_bt_rc -eq 0 ]]
+' "build.sh: produit un fichier syntaxiquement valide (dans une copie temporaire)"
 
 assert_true '
   "$(dirname "$0")/../disk-explorer.sh" --self-check >/dev/null 2>&1
@@ -54,6 +59,39 @@ assert_true '
   rc=$?
   [[ $rc -eq 0 || $rc -eq 2 ]]
 ' "disk-explorer.sh: bascule en summary quand stdin n'est pas un TTY (exit 0 ou 2)"
+
+# install.sh doit échouer quand la somme ne peut pas être vérifiée (fail-closed).
+# $1 = scénario : nosums | noentry | ok
+_fake_install() {
+    local mode="$1" root dir rc
+    root="$(cd "$(dirname "$0")/.." && pwd)"
+    dir=$(mktemp -d)
+    (
+        source "$root/install.sh"
+        INSTALL_DIR="$dir/bin"
+        fetch_latest_tag() { echo v9.9.9; }
+        download() {
+            local url=$1 dest=$2
+            case "$url" in
+                *SHA256SUMS)
+                    case "$mode" in
+                        nosums)  return 1 ;;
+                        noentry) echo "0000  autre-binaire" > "$dest" ;;
+                        ok)      echo "$(sha256sum "$TMP_FILE" | awk '{print $1}')  disk-explorer-$(get_os)-$(get_arch)" > "$dest" ;;
+                    esac ;;
+                *) printf 'fake' > "$dest" ;;
+            esac
+        }
+        main
+    ) >/dev/null 2>&1
+    rc=$?
+    rm -rf "$dir"
+    return $rc
+}
+
+assert_false "_fake_install nosums"  "install.sh: échoue si SHA256SUMS est indisponible"
+assert_false "_fake_install noentry" "install.sh: échoue si aucune somme ne correspond au binaire"
+assert_true  "_fake_install ok"      "install.sh: installe quand la somme correspond"
 
 echo "Running tests for is_integer..."
 assert_true "is_integer 123" "is_integer: positive integer"
@@ -163,6 +201,9 @@ assert_true  "remote_validate_host 'user@hostname'"         "remote_validate_hos
 assert_true  "remote_validate_host '10.0.0.1'"              "remote_validate_host: adresse IP"
 assert_true  "remote_validate_host 'host.example.com'"      "remote_validate_host: FQDN"
 assert_true  "remote_validate_host 'user@host.example.com'" "remote_validate_host: user@FQDN"
+assert_true  "remote_validate_host 'host:2222'"             "remote_validate_host: host:port accepté"
+assert_true  "remote_validate_host 'user@host:2222'"        "remote_validate_host: user@host:port accepté"
+assert_false "( remote_validate_host '-host' ) 2>/dev/null"           "remote_validate_host: nom commençant par '-' rejeté"
 assert_false "( remote_validate_host '' ) 2>/dev/null"                "remote_validate_host: hôte vide rejeté"
 assert_false "( remote_validate_host 'host;evil' ) 2>/dev/null"       "remote_validate_host: point-virgule rejeté"
 assert_false "( remote_validate_host 'host evil' ) 2>/dev/null"       "remote_validate_host: espace rejeté"

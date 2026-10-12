@@ -14,8 +14,6 @@ The project is structured as a Go application that is distributed via a Bash wra
     *   **`cmd/disk-explorer/main.go`**: Entry point. Orchestrates the scanner and TUI.
     *   **`internal/scanner`**: Parallel, cancellable directory scanner. Implements a full-scan model (scans the entire tree at startup for instant navigation).
     *   **`internal/tui`**: Interactive interface built with **Bubble Tea** and **Lip Gloss**. Supports real-time updates and dynamic sorting.
-    *   **`internal/remote`**: Native SSH orchestration using `golang.org/x/crypto/ssh`.
-    *   **`internal/assets`**: Contains the embedded original Bash script.
 
 2.  **Bash Wrapper (`disk-explorer.sh`)**:
     *   Acts as a **bootstrap script**.
@@ -32,7 +30,6 @@ The project is structured as a Go application that is distributed via a Bash wra
 *   **Bash Wrapper**: `./build.sh`
     *   This script concatenates the `src/` modules into `disk-explorer.sh`.
     *   Injects the current git version.
-    *   Synchronizes the result to `internal/assets/disk-explorer.sh` for Go embedding.
 
 ### Running
 

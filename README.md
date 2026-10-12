@@ -141,8 +141,6 @@ internal/
   scanner/               # depth-1 scanner, ScanTree, ScanTopFiles
   display/               # non-interactive formatters (summary, tree)
   updater/               # GitHub release check and self-update
-  remote/                # native Go SSH client
-  assets/                # embedded bash script (used for remote runs)
 src/                     # Bash implementation (fallback)
   main.sh                # constants, arg parsing, dispatch
   utils.sh               # pure helpers

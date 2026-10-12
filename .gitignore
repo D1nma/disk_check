@@ -5,3 +5,6 @@
 
 # graphify knowledge graph output
 graphify-out/
+
+# release binaries are built by CI into dist/
+dist/

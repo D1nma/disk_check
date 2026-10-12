@@ -9,13 +9,20 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
 )
 
-const repoURL = "https://github.com/D1nma/disk_check"
+// repoURL is a var so tests can point SelfUpdate at a local server.
+var repoURL = "https://github.com/D1nma/disk_check"
+
 const apiURL = "https://api.github.com/repos/D1nma/disk_check/releases/latest"
+
+// releaseTag accepts vX.Y.Z (optionally with a -suffix). The tag comes from the
+// GitHub API and is used to build a cache path, so anything else is refused.
+var releaseTag = regexp.MustCompile(`^v[0-9]+(\.[0-9]+)*(-[0-9A-Za-z.]+)?$`)
 
 // LatestRelease fetches the latest release tag from GitHub.
 func LatestRelease() (string, error) {
@@ -54,6 +61,9 @@ func UpdateAvailable(current string) (string, bool) {
 
 // SelfUpdate downloads the binary for tag and stores it in the cache directory.
 func SelfUpdate(tag string) error {
+	if !releaseTag.MatchString(tag) {
+		return fmt.Errorf("invalid release tag %q", tag)
+	}
 	goos := runtime.GOOS
 	goarch := runtime.GOARCH
 
@@ -73,13 +83,16 @@ func SelfUpdate(tag string) error {
 		return fmt.Errorf("download: %w", err)
 	}
 
-	if sums, err := fetchText(sumsURL); err == nil {
-		if err := verifyChecksum(tmp, name, sums); err != nil {
-			os.Remove(tmp)
-			return fmt.Errorf("checksum: %w", err)
-		}
-		fmt.Fprintln(os.Stderr, "Checksum OK")
+	sums, err := fetchText(sumsURL)
+	if err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("checksum list unavailable: %w", err)
 	}
+	if err := verifyChecksum(tmp, name, sums); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("checksum: %w", err)
+	}
+	fmt.Fprintln(os.Stderr, "Checksum OK")
 
 	if err := os.Chmod(tmp, 0755); err != nil {
 		os.Remove(tmp)
@@ -94,7 +107,14 @@ func SelfUpdate(tag string) error {
 }
 
 func downloadFile(url, dest string) error {
-	resp, err := http.Get(url)
+	client := &http.Client{Timeout: 2 * time.Minute}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "disk-explorer")
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -106,9 +126,16 @@ func downloadFile(url, dest string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = io.Copy(f, resp.Body)
-	return err
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		os.Remove(dest)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(dest)
+		return err
+	}
+	return nil
 }
 
 func fetchText(url string) (string, error) {
@@ -118,6 +145,9 @@ func fetchText(url string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTP %d pour %s", resp.StatusCode, url)
+	}
 	b, err := io.ReadAll(resp.Body)
 	return string(b), err
 }
@@ -132,7 +162,7 @@ func verifyChecksum(path, name, sums string) error {
 		}
 	}
 	if expected == "" {
-		return nil // no entry for this binary — skip verification
+		return fmt.Errorf("no checksum entry for %s", name)
 	}
 
 	f, err := os.Open(path)

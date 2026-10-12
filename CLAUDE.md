@@ -25,8 +25,7 @@ go build -ldflags "-X main.version=v1.2.3" -o disk-explorer ./cmd/disk-explorer
 ./build.sh
 ```
 
-The build concatenates modules in this order: `main.sh` header (inline code before the first function definition), then `utils.sh`, `scan.sh`, `display.sh`, `tui.sh`, `remote.sh`, then `main.sh` footer (all functions). After assembly, `bash -n` validates syntax before replacing the output file. The assembled script is also copied to `internal/assets/disk-explorer.sh`.
-
+The build concatenates modules in this order: `main.sh` header (inline code before the first function definition), then `utils.sh`, `scan.sh`, `display.sh`, `tui.sh`, `remote.sh`, then `main.sh` footer (all functions). After assembly, `bash -n` validates syntax before replacing the output file.
 `VERSION` in the assembled script is set to the exact git tag (`git describe --tags --exact-match`) when on a tagged commit, or the short git hash otherwise. Only exact tag versions trigger binary download in `try_go_binary`.
 
 **Always run `build.sh` after editing any `src/*.sh` file** — the source files are authoritative, `disk-explorer.sh` is generated.
@@ -72,8 +71,6 @@ bats tests/is_integer.bats --filter "is_integer: zero"
 | `internal/scanner` | `Scan()` — parallel recursive scan that builds a complete `Node` tree; `ScanTree()` — recursive tree up to maxDepth; `ScanTopFiles()` — top N files by disk usage |
 | `internal/display` | Non-interactive output: `Summary()`, `Tree()`, `FormatSize()` |
 | `internal/updater` | `LatestRelease()` — GitHub API; `UpdateAvailable()` — compare versions; `SelfUpdate()` — download + SHA256 verify + atomic rename |
-| `internal/remote` | Native Go SSH client (`golang.org/x/crypto/ssh`) for remote host scanning |
-| `internal/assets` | Embeds `disk-explorer.sh` for streaming to remote hosts over SSH |
 
 ### Bash modules
 

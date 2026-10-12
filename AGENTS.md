@@ -10,8 +10,6 @@ High-performance disk usage analyzer and interactive TUI written in Go with a st
 - **Internal packages** (`internal/`):
   - `scanner/`: High-performance parallel recursive filesystem scanning with worker pools and atomic metrics.
   - `tui/`: Bubble Tea TUI with instant O(1) directory navigation, sorting, and filtering.
-  - `remote/`: Native SSH remote disk scanning without installing dependencies on remote hosts.
-  - `assets/`: Embeds the standalone Bash fallback script (`internal/assets/disk-explorer.sh`).
 - **Bash implementation** (`src/`):
   - Modular scripts assembled by `build.sh` into the single-file distributable `disk-explorer.sh`.
 - **Tests**: Go unit tests beside packages (`*_test.go`), Bash smoke tests in `tests/run_tests.sh`.
@@ -24,7 +22,7 @@ High-performance disk usage analyzer and interactive TUI written in Go with a st
 ```bash
 go test ./...                  # Run all Go package unit tests
 go build ./cmd/disk-explorer   # Build the Go binary locally
-./build.sh                     # Rebuild standalone disk-explorer.sh & sync embedded assets
+./build.sh                     # Rebuild standalone disk-explorer.sh
 tests/run_tests.sh             # Run Bash smoke tests
 ```
 
@@ -46,7 +44,7 @@ tests/run_tests.sh             # Run Bash smoke tests
 When reviewing, maintaining, or generating optimizations for this repository, Jules MUST inspect code across these 6 core dimensions:
 
 ### 🛡️ 1. Sécurité & Injection de Commandes (Security / Sentinel)
-- **SSH & Remote Host Injection**: Remote hostnames, SSH ports, and scan paths in `internal/remote/` and `src/remote.sh` must be strictly sanitized. Never interpolate unsanitized strings directly into `exec.Command("ssh", ...)` or `eval`.
+- **SSH & Remote Host Injection**: Remote hostnames, SSH ports, and scan paths in `src/remote.sh` must be strictly sanitized. Never interpolate unsanitized strings directly into `exec.Command("ssh", ...)` or `eval`.
 - **Symlink Traversal & Directory Traversal**: Prevent infinite recursion on circular symlinks (`scanner` must track visited inodes or respect symlink following flags).
 - **Filesystem Permissions**: The scanner should gracefully handle `EACCES` / permission-denied errors on restricted directories without aborting the scan.
 
