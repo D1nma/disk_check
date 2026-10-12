@@ -18,10 +18,10 @@ type walkEntry struct {
 	nlink   uint64
 }
 
-func listDir(path string) (entries []walkEntry, dirSize int64, fsType int64, err error) {
+func listDir(path string) (entries []walkEntry, dirSize int64, fsType int64, subdirs int, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, 0, 0, 0, err
 	}
 	defer f.Close()
 	fd := int(f.Fd())
@@ -37,7 +37,7 @@ func listDir(path string) (entries []walkEntry, dirSize int64, fsType int64, err
 
 	names, err := f.Readdirnames(-1)
 	if err != nil {
-		return nil, dirSize, fsType, err
+		return nil, dirSize, fsType, 0, err
 	}
 	entries = make([]walkEntry, 0, len(names))
 	for _, name := range names {
@@ -49,6 +49,9 @@ func listDir(path string) (entries []walkEntry, dirSize int64, fsType int64, err
 			continue
 		}
 		isDir := cst.Mode&unix.S_IFMT == unix.S_IFDIR
+		if isDir {
+			subdirs++
+		}
 		sz := int64(0)
 		if !isDir {
 			sz = cst.Blocks * 512
@@ -63,5 +66,5 @@ func listDir(path string) (entries []walkEntry, dirSize int64, fsType int64, err
 			nlink:   uint64(cst.Nlink),
 		})
 	}
-	return entries, dirSize, fsType, nil
+	return entries, dirSize, fsType, subdirs, nil
 }

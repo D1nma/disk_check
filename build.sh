@@ -37,5 +37,4 @@ awk '
 chmod 755 "$TMP"
 bash -n "$TMP" || { echo "ERREUR: syntaxe invalide dans le fichier généré" >&2; exit 1; }
 mv "$TMP" "$OUT"
-cp "$OUT" "$SCRIPT_DIR/internal/assets/disk-explorer.sh"
-echo "Build OK → $OUT (and synchronized to internal/assets)"
+echo "Build OK → $OUT"

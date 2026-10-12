@@ -5,6 +5,7 @@ import "os"
 type ScanOptions struct {
 	SameDevice bool     // like du -x: stay on same filesystem
 	Excludes   []string // absolute paths to skip
+	Workers    int      // maximum background directory workers; 0 selects automatically
 }
 
 type Node struct {

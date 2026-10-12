@@ -93,12 +93,12 @@ main() {
 
     # Verify SHA256
     printf "Vérification du checksum...\n"
-    download "$sums_url" "${TMP_FILE}.sums" 2>/dev/null || true
-    if [[ -s "${TMP_FILE}.sums" ]]; then
-        expected=$(grep "${name}$" "${TMP_FILE}.sums" | awk '{print $1}')
-        [[ -n "$expected" ]] && verify_sha256 "$TMP_FILE" "$expected"
-        printf "Checksum OK\n"
-    fi
+    download "$sums_url" "${TMP_FILE}.sums" 2>/dev/null \
+        || die "impossible de récupérer SHA256SUMS, installation annulée"
+    expected=$(awk -v n="$name" '$2 == n {print $1}' "${TMP_FILE}.sums")
+    [[ -n "$expected" ]] || die "aucune somme SHA256 pour ${name}, installation annulée"
+    verify_sha256 "$TMP_FILE" "$expected"
+    printf "Checksum OK\n"
 
     mkdir -p "$INSTALL_DIR"
     dest="${INSTALL_DIR}/disk-explorer"
@@ -115,4 +115,7 @@ main() {
     printf "\nPour lancer : disk-explorer [dossier]\n"
 }
 
-main "$@"
+# Sourced by tests/run_tests.sh without running main; piped (curl | bash) has no BASH_SOURCE.
+if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

@@ -45,7 +45,9 @@ remote_resolve_hosts() {
 # remote_validate_host HOST
 #   Refuse les noms d'hôtes contenant des métacaractères shell susceptibles
 #   de causer une injection de commande.
-#   Format accepté : [user@]hostname[:port] — alphanum, tirets, points, @, :
+#   Format accepté : [user@]hostname[:port] — alphanum, tirets, points, @,
+#   port numérique optionnel. Ne doit pas commencer par '-' (sinon ssh
+#   interpréterait le nom comme une option).
 #   Note : les adresses IPv6 littérales ex. [::1] ne sont pas supportées
 #   directement ; utiliser --remote-ssh-opt "-o Hostname=::1" à la place.
 #
@@ -55,7 +57,9 @@ remote_resolve_hosts() {
 remote_validate_host() {
   local host="$1"
   [[ -z "$host" ]] && die "hôte vide dans la liste"
-  [[ "$host" =~ ^[a-zA-Z0-9@:._-]+$ ]] \
+  [[ "$host" != -* ]] \
+    || die "hôte invalide (ne doit pas commencer par '-') : '$host'"
+  [[ "$host" =~ ^[a-zA-Z0-9._@-]+(:[0-9]+)?$ ]] \
     || die "hôte invalide (caractères non autorisés) : '$host'"
 }
 
@@ -75,11 +79,19 @@ remote_validate_host() {
 remote_run_host() {
   local host="$1" out_file="$2" err_file="$3" status_file="$4"
 
+  # host:port -> destination "host" + option -p port (le port suit le dernier ':' après '@')
+  local target="$host" port="" hostpart="${host##*@}"
+  if [[ "$hostpart" == *:* ]]; then
+    port="${hostpart##*:}"
+    target="${host%:"$port"}"
+  fi
+
   local -a ssh_opts=(
     -o "ConnectTimeout=${REMOTE_TIMEOUT}"
     -o "BatchMode=yes"
     -o "StrictHostKeyChecking=accept-new"
   )
+  [[ -n "$port" ]] && ssh_opts+=(-p "$port")
   (( ${#REMOTE_SSH_OPTS[@]} > 0 )) && ssh_opts+=("${REMOTE_SSH_OPTS[@]}")
 
   # Options de scan propagées vers la machine distante
@@ -98,7 +110,7 @@ remote_run_host() {
   local rc=0
   # Le script est pipé via stdin ; bash -s passe les arguments suivant "--"
   # comme $@ au script distant (évite une copie temporaire avec scp).
-  ssh "${ssh_opts[@]}" "$host" bash -s -- "${remote_args[@]}" \
+  ssh "${ssh_opts[@]}" "$target" bash -s -- "${remote_args[@]}" \
     < "$_SCRIPT_SELF" \
     > "$out_file"     \
     2> "$err_file"    \

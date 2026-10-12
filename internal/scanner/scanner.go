@@ -13,10 +13,16 @@ import (
 	"time"
 )
 
-func workerCount() int {
-	n := runtime.GOMAXPROCS(0) * 2
-	if n > 16 {
-		return 16
+func workerCount(requested int) int {
+	if requested > 0 {
+		if requested > 64 {
+			return 64
+		}
+		return requested
+	}
+	n := runtime.GOMAXPROCS(0) * 4
+	if n > 32 {
+		return 32
 	}
 	if n < 2 {
 		return 2
@@ -99,9 +105,16 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 		var seenMu sync.Mutex
 		seen := make(map[inodeKey]struct{})
 
-		nWorkers := workerCount()
+		nWorkers := workerCount(opts.Workers)
+		branchThreshold := nWorkers / 2
+		if branchThreshold < 2 {
+			branchThreshold = 2
+		}
 		taskCh := make(chan dirTask, nWorkers*4)
 		var taskWg sync.WaitGroup
+		var workerWg sync.WaitGroup
+		var activeWorkers atomic.Int32
+		var growWorkers func(target int)
 
 		var processDir func(path string, node *Node, isRoot bool, arena *nodeArena)
 		processDir = func(path string, node *Node, isRoot bool, arena *nodeArena) {
@@ -111,12 +124,16 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			}
 			current.Store(path)
 
-			ents, dirSize, fsType, err := listDir(path)
+			ents, dirSize, fsType, subdirs, err := listDir(path)
 			if err != nil {
 				return
 			}
 			if !isRoot && isKernFS(fsType) {
 				return
+			}
+			// Wide branches have enough parallel work to use the full pool now.
+			if subdirs >= branchThreshold {
+				growWorkers(nWorkers)
 			}
 			node.Size = dirSize
 
@@ -171,6 +188,9 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 					t := dirTask{childPath, child}
 					select {
 					case taskCh <- t:
+						if pending := len(taskCh); pending > int(activeWorkers.Load()) {
+							growWorkers(pending * 2)
+						}
 					default:
 						leftover = append(leftover, t)
 					}
@@ -219,8 +239,7 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			}
 		}()
 
-		var workerWg sync.WaitGroup
-		for i := 0; i < nWorkers; i++ {
+		spawnWorker := func() {
 			workerWg.Add(1)
 			go func() {
 				defer workerWg.Done()
@@ -230,6 +249,25 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 				}
 			}()
 		}
+		growWorkers = func(target int) {
+			if target > nWorkers {
+				target = nWorkers
+			}
+			for {
+				workers := activeWorkers.Load()
+				if int(workers) >= target {
+					return
+				}
+				if activeWorkers.CompareAndSwap(workers, int32(target)) {
+					for i := int(workers); i < target; i++ {
+						spawnWorker()
+					}
+					return
+				}
+			}
+		}
+		activeWorkers.Store(1)
+		spawnWorker()
 
 		taskWg.Add(1)
 		go func() {
@@ -287,7 +325,9 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 		}
 
 		cur, _ := current.Load().(string)
-		ch <- ScanProgress{
+		// Blocking send would leak this goroutine if the consumer quit after cancel.
+		select {
+		case ch <- ScanProgress{
 			Files:    int(atomic.LoadInt64(&totalFiles)),
 			Dirs:     int(atomic.LoadInt64(&totalDirs)),
 			Size:     rootNode.Size,
@@ -295,6 +335,8 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			Done:     true,
 			Root:     rootNode,
 			TopFiles: topFiles,
+		}:
+		case <-ctx.Done():
 		}
 	}()
 	return ch
