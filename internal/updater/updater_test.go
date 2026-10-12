@@ -57,11 +57,13 @@ func TestSelfUpdate(t *testing.T) {
 		sumsCode int
 		sumsBody string
 		wantErr  bool
+		noBinary bool
 	}{
-		{"valid checksum", "v1.2.3", http.StatusOK, goodHash + "  " + name + "\n", false},
-		{"sums missing", "v1.2.3", http.StatusNotFound, "", true},
-		{"no entry for binary", "v1.2.3", http.StatusOK, goodHash + "  other-binary\n", true},
-		{"tag with path traversal", "../../etc", http.StatusOK, goodHash + "  " + name + "\n", true},
+		{"valid checksum", "v1.2.3", http.StatusOK, goodHash + "  " + name + "\n", false, false},
+		{"sums missing", "v1.2.3", http.StatusNotFound, "", true, false},
+		{"no entry for binary", "v1.2.3", http.StatusOK, goodHash + "  other-binary\n", true, false},
+		{"binary download fails", "v1.2.3", http.StatusOK, goodHash + "  " + name + "\n", true, true},
+		{"tag with path traversal", "../../etc", http.StatusOK, goodHash + "  " + name + "\n", true, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -74,6 +76,10 @@ func TestSelfUpdate(t *testing.T) {
 					w.WriteHeader(tt.sumsCode)
 					io.WriteString(w, tt.sumsBody)
 				case strings.HasSuffix(r.URL.Path, "/"+name):
+					if tt.noBinary {
+						http.NotFound(w, r)
+						return
+					}
 					w.Write(binary)
 				default:
 					http.NotFound(w, r)
@@ -97,6 +103,10 @@ func TestSelfUpdate(t *testing.T) {
 			}
 			if !tt.wantErr && statErr != nil {
 				t.Errorf("target %s not written: %v", target, statErr)
+			}
+			leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(target), "*.tmp"))
+			if len(leftovers) > 0 {
+				t.Errorf("temp files left behind: %v", leftovers)
 			}
 		})
 	}

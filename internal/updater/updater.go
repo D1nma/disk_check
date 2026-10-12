@@ -76,10 +76,17 @@ func SelfUpdate(tag string) error {
 		return err
 	}
 	target := filepath.Join(cacheDir, "disk-explorer")
-	tmp := target + ".tmp"
+	// Unique temp name: two concurrent updates must not write the same file.
+	tmpFile, err := os.CreateTemp(cacheDir, "disk-explorer-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := tmpFile.Name()
+	tmpFile.Close()
 
 	fmt.Fprintf(os.Stderr, "Téléchargement de disk-explorer %s (%s/%s)...\n", tag, goos, goarch)
 	if err := downloadFile(binURL, tmp); err != nil {
+		os.Remove(tmp)
 		return fmt.Errorf("download: %w", err)
 	}
 
@@ -148,7 +155,8 @@ func fetchText(url string) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("HTTP %d pour %s", resp.StatusCode, url)
 	}
-	b, err := io.ReadAll(resp.Body)
+	// The sums file is a few hundred bytes; cap the read so a bad server cannot fill memory.
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	return string(b), err
 }
 
