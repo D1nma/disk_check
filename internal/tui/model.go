@@ -208,6 +208,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.parentIndex = make(map[*scanner.Node]int)
 				}
 				m.parentIndex[selectedChild] = m.Selected
+				m.generation++
 				m.Current = selectedChild
 				m.Entries = m.Current.Children
 				m.restoreEntries()
@@ -223,6 +224,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.Current.Parent != nil {
 				oldNode := m.Current
+				m.generation++
 				m.Current = m.Current.Parent
 				m.Entries = m.Current.Children
 				cachedOrder := m.restoreEntries()

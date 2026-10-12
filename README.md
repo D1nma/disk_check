@@ -95,6 +95,9 @@ disk-explorer --tree --tree-depth 5 /var
 
 # Show 30 entries instead of the default 20
 disk-explorer --top 30 --summary /
+
+# Limit concurrent directory scans on slow or remote storage (0 = automatic)
+disk-explorer --scan-workers 4 --summary /mnt/archive
 ```
 
 ### Maintenance
@@ -104,6 +107,19 @@ disk-explorer --version          # print the current version
 disk-explorer --update           # download and cache the latest release
 disk-explorer --bash             # force the Bash fallback (skip Go binary)
 ```
+
+### Benchmark against ncdu
+
+```bash
+CGO_ENABLED=0 go build -o disk-explorer ./cmd/disk-explorer
+python3 benchmarks/compare_ncdu.py /path/to/directory
+```
+
+The script alternates eight warm-cache runs and reports median completed-scan times. It runs `disk-explorer --summary` and `ncdu -0 --ignore-config -o /dev/null` on the same path. Their output work differs, so compare trends across directory shapes and storage devices rather than treating the ratio as a universal speed claim. On this Linux arm64 machine with four CPUs, a 100-directory, 20,000-empty-file tree scanned in about 16–18 ms versus 32–40 ms for ncdu 1.22, on both tmpfs and the repository filesystem. A flat 20,000-file directory took about 37–40 ms versus 33–36 ms for ncdu, and a 100-level chain remained slower.
+
+The automatic scanner starts with one background worker and grows the pool when it discovers parallel directory work. The maximum follows `GOMAXPROCS` (four workers per CPU, capped at 32). Use `--scan-workers N` to cap it at 1–64 for storage where another limit performs better. Pass the same option to `benchmarks/compare_ncdu.py` to compare limits on your own machine.
+
+For scanner-only Go measurements of wide and deep trees, run `go test ./internal/scanner -run '^$' -bench BenchmarkScan -benchmem`.
 
 ### Remote scan (SSH)
 

@@ -32,6 +32,7 @@ func main() {
 		treeDepth   int
 		topN        int
 		reportDir   string
+		scanWorkers int
 	)
 
 	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
@@ -54,7 +55,12 @@ func main() {
 	flag.IntVar(&treeDepth, "tree-depth", 3, "Max depth for --tree")
 	flag.IntVar(&topN, "top", 20, "Number of top entries to show in --summary/--report")
 	flag.StringVar(&reportDir, "report-dir", ".", "Output directory for --report")
+	flag.IntVar(&scanWorkers, "scan-workers", 0, "Maximum background scan workers (0 = automatic, 1-64 = fixed limit)")
 	flag.Parse()
+	if scanWorkers < 0 || scanWorkers > 64 {
+		fmt.Fprintln(os.Stderr, "--scan-workers must be between 0 and 64")
+		os.Exit(2)
+	}
 
 	if showVersion {
 		fmt.Printf("disk-explorer %s\n", version)
@@ -86,6 +92,7 @@ func main() {
 	opts := scanner.ScanOptions{
 		SameDevice: mode == "partition",
 		Excludes:   excludes,
+		Workers:    scanWorkers,
 	}
 
 	switch {

@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -397,9 +398,41 @@ func TestScanHardlinkCountedOnce(t *testing.T) {
 }
 
 func TestWorkerCountBounds(t *testing.T) {
-	n := workerCount()
-	if n < 2 || n > 16 {
-		t.Fatalf("workerCount=%d want in [2,16]", n)
+	n := workerCount(0)
+	if n < 2 || n > 32 {
+		t.Fatalf("workerCount=%d want in [2,32]", n)
+	}
+	if got := workerCount(1); got != 1 {
+		t.Fatalf("workerCount(1)=%d want 1", got)
+	}
+	if got := workerCount(100); got != 64 {
+		t.Fatalf("workerCount(100)=%d want 64", got)
+	}
+}
+
+func TestScanWorkerLimits(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 12; i++ {
+		dir := filepath.Join(root, string(rune('a'+i)))
+		if err := os.Mkdir(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "file"), []byte("data"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, workers := range []int{0, 1, 4, 64} {
+		t.Run(fmt.Sprintf("workers-%d", workers), func(t *testing.T) {
+			var result ScanProgress
+			for progress := range Scan(context.Background(), root, ScanOptions{Workers: workers}) {
+				if progress.Done {
+					result = progress
+				}
+			}
+			if result.Root == nil || result.Files != 12 || result.Dirs != 12 || result.Root.DirCount != 12 {
+				t.Fatalf("incorrect scan with %d workers: %+v", workers, result)
+			}
+		})
 	}
 }
 
@@ -413,12 +446,15 @@ func TestListDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ents, dirSize, _, err := listDir(tmp)
+	ents, dirSize, _, subdirs, err := listDir(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if dirSize < 0 {
 		t.Fatalf("dirSize=%d", dirSize)
+	}
+	if subdirs != 1 {
+		t.Fatalf("subdirs=%d want 1", subdirs)
 	}
 	var sawFile, sawDir bool
 	for _, e := range ents {
