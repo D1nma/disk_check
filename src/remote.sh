@@ -107,10 +107,16 @@ remote_run_host() {
     --max-depth   "$MAX_DEPTH"
   )
 
+  local remote_cmd="" arg
+  for arg in bash -s -- "${remote_args[@]}"; do
+    remote_cmd+="$(printf '%q ' "$arg")"
+  done
+
   local rc=0
   # Le script est pipé via stdin ; bash -s passe les arguments suivant "--"
   # comme $@ au script distant (évite une copie temporaire avec scp).
-  ssh "${ssh_opts[@]}" "$target" bash -s -- "${remote_args[@]}" \
+  # remote_cmd est formaté avec printf '%q' pour résister aux espaces et métacaractères.
+  ssh "${ssh_opts[@]}" "$target" "$remote_cmd" \
     < "$_SCRIPT_SELF" \
     > "$out_file"     \
     2> "$err_file"    \

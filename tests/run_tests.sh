@@ -279,6 +279,25 @@ assert_true '
   [[ "${#REMOTE_SSH_OPTS[@]}" -eq 2 && "${REMOTE_SSH_OPTS[0]}" == "-p 2222" ]]
 ' "--remote-ssh-opt: accumule les options répétées"
 
+echo -e "\nRunning tests for remote_run_host escaping..."
+
+assert_true '
+  _tmp_bin=$(mktemp -d)
+  cat << '"'"'EOF'"'"' > "$_tmp_bin/ssh"
+#!/usr/bin/env bash
+echo "$@"
+EOF
+  chmod +x "$_tmp_bin/ssh"
+  _out=$(mktemp); _err=$(mktemp); _st=$(mktemp)
+  _SCRIPT_SELF="/dev/null"
+  REMOTE_PATH="/var/log/my folder; touch /tmp/pwned"
+  ANALYSIS_MODE="global"; SORT_MODE="size"; TOP_COUNT=10; TOP_FILES_COUNT=10; MAX_DEPTH=-1; REMOTE_TIMEOUT=5
+  PATH="$_tmp_bin:$PATH" remote_run_host "h1" "$_out" "$_err" "$_st" >/dev/null 2>&1
+  _captured=$(cat "$_out")
+  rm -rf "$_tmp_bin" "$_out" "$_err" "$_st"
+  [[ "$_captured" == *"bash -s -- --path /var/log/my\\ folder\\;\\ touch\\ /tmp/pwned"* ]]
+' "remote_run_host: argument escaping prevents command injection in remote path"
+
 echo -e "\nSummary: $total tests, $((total - failed)) passed, $failed failed."
 
 if [ $failed -ne 0 ]; then
