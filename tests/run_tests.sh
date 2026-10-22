@@ -243,6 +243,29 @@ assert_false '
   ( _SCRIPT_SELF=""; REMOTE_HOSTS=(h1); remote_run_all ) 2>/dev/null
 ' "remote_run_all: échoue si _SCRIPT_SELF vide (exécution via pipe)"
 
+_test_remote_escaping() {
+  ssh() {
+    printf "%s" "${*: -1}"
+    return 0
+  }
+  _SCRIPT_SELF="/dev/null"
+  REMOTE_PATH="/var/log/my folder & tests"
+  ANALYSIS_MODE="partition"
+  SORT_MODE="size"
+  TOP_COUNT=10
+  TOP_FILES_COUNT=10
+  MAX_DEPTH=-1
+  REMOTE_TIMEOUT=10
+  REMOTE_SSH_OPTS=()
+  local out_f err_f st_f res_cmd
+  out_f=$(mktemp) err_f=$(mktemp) st_f=$(mktemp)
+  remote_run_host "myhost" "$out_f" "$err_f" "$st_f"
+  res_cmd=$(cat "$out_f")
+  rm -f "$out_f" "$err_f" "$st_f"
+  [[ "$res_cmd" == *"my\\ folder\\ \\&\\ tests"* || "$res_cmd" == *"'/var/log/my folder & tests'"* ]]
+}
+assert_true "_test_remote_escaping" "remote_run_host: échappe de manière sûre les arguments SSH distants"
+
 echo -e "\nRunning tests for --remote option parsing..."
 
 assert_true '

@@ -24,7 +24,7 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="3bedd9f"
+VERSION="39eb6d7"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
 
@@ -2435,10 +2435,17 @@ remote_run_host() {
     --max-depth   "$MAX_DEPTH"
   )
 
+  local remote_cmd="bash -s --"
+  local arg
+  for arg in "${remote_args[@]}"; do
+    remote_cmd+=" $(printf '%q' "$arg")"
+  done
+
   local rc=0
   # Le script est pipé via stdin ; bash -s passe les arguments suivant "--"
   # comme $@ au script distant (évite une copie temporaire avec scp).
-  ssh "${ssh_opts[@]}" "$target" bash -s -- "${remote_args[@]}" \
+  # remote_cmd est échappé de manière sûre pour l'évaluation par le shell distant.
+  ssh "${ssh_opts[@]}" "$target" "$remote_cmd" \
     < "$_SCRIPT_SELF" \
     > "$out_file"     \
     2> "$err_file"    \
