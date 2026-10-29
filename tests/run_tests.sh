@@ -237,6 +237,19 @@ assert_false '
   ( REMOTE_HOSTS=(); REMOTE_HOSTS_FILE=""; remote_resolve_hosts ) 2>/dev/null
 ' "remote_resolve_hosts: échoue si aucun hôte fourni"
 
+echo -e "\nRunning tests for remote_run_host argument escaping..."
+
+assert_true '
+  _ssh_cmd=""
+  ssh() { _ssh_cmd="$*"; return 0; }
+  REMOTE_PATH="/var/my folder/special \$path"
+  _out=$(mktemp) _err=$(mktemp) _st=$(mktemp)
+  _SCRIPT_SELF="/dev/null"
+  remote_run_host "localhost" "$_out" "$_err" "$_st"
+  rm -f "$_out" "$_err" "$_st"
+  [[ "$_ssh_cmd" == *"bash -s --"*"/var/my"* ]]
+' "remote_run_host: échappe correctement les arguments complexes avec espaces et métacaractères"
+
 echo -e "\nRunning tests for remote_run_all guards..."
 
 assert_false '
