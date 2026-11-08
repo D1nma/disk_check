@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -184,12 +185,14 @@ func runReport(path string, opts scanner.ScanOptions, topN int, reportDir string
 }
 
 func runTree(w io.Writer, path string, opts scanner.ScanOptions, maxDepth int) {
-	node, err := scanner.ScanTree(context.Background(), path, maxDepth, opts)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	res := collectRoot(path, opts)
+	if res.Root == nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot access %s\n", path)
 		os.Exit(1)
 	}
-	display.Tree(w, node, maxDepth)
+	bw := bufio.NewWriter(w)
+	defer bw.Flush()
+	display.Tree(bw, res.Root, maxDepth)
 }
 
 func runTUI(path string, opts scanner.ScanOptions) {

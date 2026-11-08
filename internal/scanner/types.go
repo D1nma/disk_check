@@ -12,10 +12,11 @@ type Node struct {
 	Name      string
 	Size      int64
 	ModTime   int64 // unix seconds
+	OwnSize   int64 // directory inode's own blocks; 0 for files
 	Parent    *Node
 	Children  []*Node
-	FileCount int
-	DirCount  int
+	FileCount int32
+	DirCount  int32
 	IsDir     bool
 }
 

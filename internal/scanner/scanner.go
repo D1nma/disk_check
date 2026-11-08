@@ -136,6 +136,7 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 				growWorkers(nWorkers)
 			}
 			node.Size = dirSize
+			node.OwnSize = dirSize
 
 			localChildren := make([]*Node, 0, len(ents))
 			var leftover []dirTask
@@ -297,26 +298,26 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 				return
 			}
 			own := n.Size
-			var files int
+			var files int64
 			var sz int64
 			for _, child := range n.Children {
 				aggregate(child)
 				sz += child.Size
 				if child.IsDir {
-					files += child.FileCount
+					files += int64(child.FileCount)
 				} else {
 					files++
 				}
 			}
 			n.Size = own + sz
-			n.FileCount = files
-			dirCount := 0
+			n.FileCount = int32(files)
+			var dirCount int64
 			for _, child := range n.Children {
 				if child.IsDir {
-					dirCount += 1 + child.DirCount
+					dirCount += 1 + int64(child.DirCount)
 				}
 			}
-			n.DirCount = dirCount
+			n.DirCount = int32(dirCount)
 		}
 		aggregate(rootNode)
 		topFiles := make([]*Node, topH.Len())

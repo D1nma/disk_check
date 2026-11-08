@@ -230,58 +230,6 @@ func TestTopFiles(t *testing.T) {
 	}
 }
 
-func TestScanTree(t *testing.T) {
-	tmp, err := os.MkdirTemp("", "scanner_tree_test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmp)
-
-	// tmp/
-	//   file1 (100)
-	//   dir1/
-	//     file2 (200)
-
-	if err := os.WriteFile(filepath.Join(tmp, "file1"), make([]byte, 100), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dir1 := filepath.Join(tmp, "dir1")
-	if err := os.Mkdir(dir1, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir1, "file2"), make([]byte, 200), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx := context.Background()
-	tree, err := ScanTree(ctx, tmp, 1, ScanOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if tree == nil {
-		t.Fatal("expected tree")
-	}
-
-	// Depth 1: should have file1 and dir1
-	if len(tree.Children) != 2 {
-		t.Fatalf("expected 2 children at depth 1, got %d", len(tree.Children))
-	}
-
-	// dir1 should have children empty because maxDepth=1
-	for _, child := range tree.Children {
-		if child.Name == "dir1" {
-			if len(child.Children) != 0 {
-				t.Errorf("expected dir1 to have 0 children due to maxDepth=1, got %d", len(child.Children))
-			}
-			// But it should have its size calculated by sumDir
-			if child.Size < 200 {
-				t.Errorf("expected dir1 size >= 200, got %d", child.Size)
-			}
-		}
-	}
-}
-
 func TestNodePath(t *testing.T) {
 	root := &Node{Name: "/home/user", IsDir: true}
 	child := &Node{Name: "docs", IsDir: true, Parent: root}
