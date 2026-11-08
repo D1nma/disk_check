@@ -45,8 +45,11 @@ assert_true '
 ' "build.sh: produit un fichier syntaxiquement valide (dans une copie temporaire)"
 
 assert_true '
-  "$(dirname "$0")/../disk-explorer.sh" --self-check >/dev/null 2>&1
-' "disk-explorer.sh --self-check: exit 0"
+  # --bash : ces tests ciblent le fallback Bash ; sans ce flag, le
+  # bootstrap télécharge et exécute le binaire Go quand un tag de release
+  # existe (nécessite réseau et change les drapeaux disponibles).
+  "$(dirname "$0")/../disk-explorer.sh" --bash --self-check >/dev/null 2>&1
+' "disk-explorer.sh --bash --self-check: exit 0"
 
 assert_true '
   "$(dirname "$0")/../disk-explorer.sh" --summary /tmp >/dev/null 2>&1
@@ -55,10 +58,10 @@ assert_true '
 ' "disk-explorer.sh --summary /tmp: exit 0 ou 2"
 
 assert_true '
-  echo "" | "$(dirname "$0")/../disk-explorer.sh" /tmp >/dev/null 2>&1
+  echo "" | "$(dirname "$0")/../disk-explorer.sh" --bash /tmp >/dev/null 2>&1
   rc=$?
   [[ $rc -eq 0 || $rc -eq 2 ]]
-' "disk-explorer.sh: bascule en summary quand stdin n'est pas un TTY (exit 0 ou 2)"
+' "disk-explorer.sh: bascule en summary quand stdin n'est pas un TTY (mode --bash, exit 0 ou 2)"
 
 # install.sh doit échouer quand la somme ne peut pas être vérifiée (fail-closed).
 # $1 = scénario : nosums | noentry | ok
