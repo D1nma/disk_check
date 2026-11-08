@@ -36,8 +36,9 @@ type inodeKey struct {
 }
 
 type dirTask struct {
-	path string
-	node *Node
+	path   string
+	node   *Node
+	fsType int64 // filesystem type of the parent, inherited when no mount is crossed
 }
 
 func joinPath(dir, name string) string {
@@ -60,6 +61,12 @@ func (a *nodeArena) new() *Node {
 	n := &a.cur[a.i]
 	a.i++
 	return n
+}
+
+// scanWorker bundles the per-worker arena with the reusable listing buffers.
+type scanWorker struct {
+	nodes   nodeArena
+	listing listCtx
 }
 
 // Scan builds a full Node tree and reports progress via ScanProgress.
@@ -110,21 +117,35 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 		if branchThreshold < 2 {
 			branchThreshold = 2
 		}
+		// Mount roots are the only places where the filesystem type can
+		// change; everywhere else it is inherited from the parent, saving
+		// one fstatfs per directory. loadMounts()==nil (no mountinfo)
+		// falls back to stat-ing every directory.
+		mounts := loadMounts()
 		taskCh := make(chan dirTask, nWorkers*4)
 		var taskWg sync.WaitGroup
 		var workerWg sync.WaitGroup
 		var activeWorkers atomic.Int32
 		var growWorkers func(target int)
 
-		var processDir func(path string, node *Node, isRoot bool, arena *nodeArena)
-		processDir = func(path string, node *Node, isRoot bool, arena *nodeArena) {
+		var processDir func(path string, node *Node, isRoot bool, w *scanWorker, parentFs int64)
+		processDir = func(path string, node *Node, isRoot bool, w *scanWorker, parentFs int64) {
 			defer taskWg.Done()
 			if ctx.Err() != nil {
 				return
 			}
 			current.Store(path)
 
-			ents, dirSize, fsType, subdirs, err := listDir(path)
+			// The filesystem type can only change at a mount root.
+			wantStat := isRoot || parentFs == 0
+			if !wantStat {
+				if mounts == nil {
+					wantStat = true
+				} else if _, onMount := mounts[path]; onMount {
+					wantStat = true
+				}
+			}
+			ents, dirSize, fsType, subdirs, err := listDir(&w.listing, path, wantStat, parentFs, isRoot)
 			if err != nil {
 				return
 			}
@@ -136,6 +157,7 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 				growWorkers(nWorkers)
 			}
 			node.Size = dirSize
+			node.OwnSize = dirSize
 
 			localChildren := make([]*Node, 0, len(ents))
 			var leftover []dirTask
@@ -158,7 +180,7 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 					}
 				}
 
-				child := arena.new()
+				child := w.nodes.new()
 				*child = Node{
 					Name:    ent.name,
 					IsDir:   ent.isDir,
@@ -185,7 +207,7 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 				} else {
 					localDirs++
 					taskWg.Add(1)
-					t := dirTask{childPath, child}
+					t := dirTask{path: childPath, node: child, fsType: fsType}
 					select {
 					case taskCh <- t:
 						if pending := len(taskCh); pending > int(activeWorkers.Load()) {
@@ -208,7 +230,7 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			}
 			node.Children = localChildren
 			for _, t := range leftover {
-				processDir(t.path, t.node, false, arena)
+				processDir(t.path, t.node, false, w, t.fsType)
 			}
 		}
 
@@ -243,9 +265,9 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			workerWg.Add(1)
 			go func() {
 				defer workerWg.Done()
-				var arena nodeArena
+				w := &scanWorker{}
 				for t := range taskCh {
-					processDir(t.path, t.node, false, &arena)
+					processDir(t.path, t.node, false, w, t.fsType)
 				}
 			}()
 		}
@@ -274,8 +296,8 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			taskWg.Wait()
 			close(taskCh)
 		}()
-		var rootArena nodeArena
-		processDir(abs, rootNode, true, &rootArena)
+		var rootWorker scanWorker
+		processDir(abs, rootNode, true, &rootWorker, 0)
 		workerWg.Wait()
 		close(stopProgress)
 		progressWg.Wait()
@@ -297,26 +319,26 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 				return
 			}
 			own := n.Size
-			var files int
+			var files int64
 			var sz int64
 			for _, child := range n.Children {
 				aggregate(child)
 				sz += child.Size
 				if child.IsDir {
-					files += child.FileCount
+					files += int64(child.FileCount)
 				} else {
 					files++
 				}
 			}
 			n.Size = own + sz
-			n.FileCount = files
-			dirCount := 0
+			n.FileCount = int32(files)
+			var dirCount int64
 			for _, child := range n.Children {
 				if child.IsDir {
-					dirCount += 1 + child.DirCount
+					dirCount += 1 + int64(child.DirCount)
 				}
 			}
-			n.DirCount = dirCount
+			n.DirCount = int32(dirCount)
 		}
 		aggregate(rootNode)
 		topFiles := make([]*Node, topH.Len())

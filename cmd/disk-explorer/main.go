@@ -184,12 +184,12 @@ func runReport(path string, opts scanner.ScanOptions, topN int, reportDir string
 }
 
 func runTree(w io.Writer, path string, opts scanner.ScanOptions, maxDepth int) {
-	node, err := scanner.ScanTree(context.Background(), path, maxDepth, opts)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	res := collectRoot(path, opts)
+	if res.Root == nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot access %s\n", path)
 		os.Exit(1)
 	}
-	display.Tree(w, node, maxDepth)
+	display.Tree(w, res.Root, maxDepth)
 }
 
 func runTUI(path string, opts scanner.ScanOptions) {
@@ -215,8 +215,29 @@ func runTUI(path string, opts scanner.ScanOptions) {
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithInputTTY())
-	if _, err := p.Run(); err != nil {
+	finalModel, err := p.Run()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fm, ok := finalModel.(tui.Model)
+	if !ok || fm.PendingUpdate == "" {
+		return
+	}
+	// The user accepted the update: the TUI has exited and the terminal is
+	// restored. Install the prefetched binary and re-exec in place.
+	if err := updater.Install(fm.PendingUpdate); err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur pendant l'installation de la mise à jour: %v\n", err)
+		os.Exit(1)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		exe = os.Args[0]
+	}
+	fmt.Println("Mise à jour installée — relance de disk-explorer…")
+	if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur au redémarrage (%v) — relancez disk-explorer manuellement\n", err)
 		os.Exit(1)
 	}
 }

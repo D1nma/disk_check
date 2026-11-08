@@ -152,8 +152,18 @@ get_arch() {
     local arch
     arch=$(uname -m)
     case "$arch" in
-        x86_64|amd64) echo "amd64" ;;
-        arm64|aarch64) echo "arm64" ;;
+        x86_64|amd64)                          echo "amd64" ;;
+        i386|i486|i586|i686|x86)               echo "386" ;;
+        arm64|aarch64)                         echo "arm64" ;;
+        arm|armv5*|armv6*|armv7*|armv8l)        echo "arm" ;;
+        riscv64)                               echo "riscv64" ;;
+        ppc64le|ppc64el)                       echo "ppc64le" ;;
+        s390x)                                 echo "s390x" ;;
+        loongarch64)                           echo "loong64" ;;
+        mips)                                  echo "mips" ;;
+        mipsel|mipsle)                         echo "mipsle" ;;
+        mips64)                                echo "mips64" ;;
+        mips64el|mips64le)                     echo "mips64le" ;;
         *) echo "$arch" ;;
     esac
 }

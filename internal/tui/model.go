@@ -3,11 +3,13 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"syscall"
 
 	"github.com/D1nma/disk_check/internal/scanner"
+	"github.com/D1nma/disk_check/internal/updater"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -47,6 +49,23 @@ type diskInfoMsg struct {
 }
 
 type updateAvailableMsg struct{ tag string }
+
+// updatePrefetchedMsg carries the result of the background download.
+type updatePrefetchedMsg struct {
+	tag  string
+	file string
+	err  error
+}
+
+type updateState int
+
+const (
+	updateNone updateState = iota
+	updateDownloading
+	updateReady
+	updateFailed
+	updateDismissed
+)
 
 // ── Model ────────────────────────────────────────────────────────────────────
 
@@ -91,8 +110,15 @@ type Model struct {
 	diskUsed  int64
 	diskAvail int64
 
-	// set when a newer release is available
-	updateAvailable string
+	// update download state (TUI asks before installing)
+	updateState updateState
+	updateTag   string
+	updateFile  string
+	updateErr   string
+
+	// set when the user accepted the update: main installs this file and
+	// re-execs the binary after the TUI has fully exited.
+	PendingUpdate string
 
 	// generation counter — incremented on each navigation to discard stale messages
 	generation int
@@ -113,7 +139,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case updateAvailableMsg:
-		m.updateAvailable = msg.tag
+		m.updateTag = msg.tag
+		m.updateState = updateDownloading
+		return m, prefetchUpdate(msg.tag)
+
+	case updatePrefetchedMsg:
+		if m.updateState == updateDismissed {
+			if msg.file != "" {
+				return m, removeFile(msg.file)
+			}
+			return m, nil
+		}
+		if msg.err != nil {
+			m.updateState = updateFailed
+			m.updateErr = msg.err.Error()
+			return m, nil
+		}
+		m.updateState = updateReady
+		m.updateFile = msg.file
+		return m, nil
 
 	case diskInfoMsg:
 		m.diskTotal = msg.Total
@@ -146,6 +190,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.CancelScan()
 			}
 			return m, tea.Quit
+
+		case "u":
+			if m.updateState == updateReady {
+				if m.CancelScan != nil {
+					m.CancelScan()
+				}
+				m.PendingUpdate = m.updateFile
+				return m, tea.Quit
+			}
+
+		case "i":
+			if m.updateState == updateDownloading || m.updateState == updateReady {
+				file := m.updateFile
+				m.updateState = updateDismissed
+				m.updateFile = ""
+				if file != "" {
+					return m, removeFile(file)
+				}
+				return m, nil
+			}
 
 		case "up", "k":
 			if m.State == StateScanning {
@@ -344,6 +408,23 @@ func listenForUpdate(ch <-chan string) tea.Cmd {
 	}
 }
 
+// prefetchUpdate downloads and verifies the release binary in the
+// background so the upgrade is instant once the user accepts it.
+func prefetchUpdate(tag string) tea.Cmd {
+	return func() tea.Msg {
+		file, err := updater.Prefetch(tag)
+		return updatePrefetchedMsg{tag: tag, file: file, err: err}
+	}
+}
+
+// removeFile cleans up a prefetched update the user declined.
+func removeFile(path string) tea.Cmd {
+	return func() tea.Msg {
+		os.Remove(path)
+		return nil
+	}
+}
+
 func listenForProgress(ch <-chan scanner.ScanProgress, gen int) tea.Cmd {
 	return func() tea.Msg {
 		p, ok := <-ch
@@ -500,8 +581,13 @@ func (m Model) View() string {
 	// Footer
 	footer := "[↑↓/jk] nav  [Enter] cd  [←/h] retour  [s]ize [n]ame [t]ime  [q]uit"
 	b.WriteString(dimStyle.Render(footer))
-	if m.updateAvailable != "" {
-		b.WriteString("\n" + yellowStyle.Render(fmt.Sprintf("  Mise à jour disponible : %s  (disk-explorer --update)", m.updateAvailable)))
+	switch m.updateState {
+	case updateDownloading:
+		b.WriteString("\n" + yellowStyle.Render(fmt.Sprintf("  ⬇ Mise à jour %s : téléchargement en cours…", m.updateTag)))
+	case updateReady:
+		b.WriteString("\n" + yellowStyle.Render(fmt.Sprintf("  Mise à jour %s prête — [u] installer et redémarrer  ·  [i] ignorer cette session", m.updateTag)))
+	case updateFailed:
+		b.WriteString("\n" + yellowStyle.Render(fmt.Sprintf("  Mise à jour %s indisponible : %s", m.updateTag, m.updateErr)))
 	}
 
 	return b.String()

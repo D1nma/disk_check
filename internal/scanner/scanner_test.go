@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -230,58 +231,6 @@ func TestTopFiles(t *testing.T) {
 	}
 }
 
-func TestScanTree(t *testing.T) {
-	tmp, err := os.MkdirTemp("", "scanner_tree_test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmp)
-
-	// tmp/
-	//   file1 (100)
-	//   dir1/
-	//     file2 (200)
-
-	if err := os.WriteFile(filepath.Join(tmp, "file1"), make([]byte, 100), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dir1 := filepath.Join(tmp, "dir1")
-	if err := os.Mkdir(dir1, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir1, "file2"), make([]byte, 200), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx := context.Background()
-	tree, err := ScanTree(ctx, tmp, 1, ScanOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if tree == nil {
-		t.Fatal("expected tree")
-	}
-
-	// Depth 1: should have file1 and dir1
-	if len(tree.Children) != 2 {
-		t.Fatalf("expected 2 children at depth 1, got %d", len(tree.Children))
-	}
-
-	// dir1 should have children empty because maxDepth=1
-	for _, child := range tree.Children {
-		if child.Name == "dir1" {
-			if len(child.Children) != 0 {
-				t.Errorf("expected dir1 to have 0 children due to maxDepth=1, got %d", len(child.Children))
-			}
-			// But it should have its size calculated by sumDir
-			if child.Size < 200 {
-				t.Errorf("expected dir1 size >= 200, got %d", child.Size)
-			}
-		}
-	}
-}
-
 func TestNodePath(t *testing.T) {
 	root := &Node{Name: "/home/user", IsDir: true}
 	child := &Node{Name: "docs", IsDir: true, Parent: root}
@@ -397,6 +346,42 @@ func TestScanHardlinkCountedOnce(t *testing.T) {
 	}
 }
 
+func TestLoadMounts(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("mountinfo is Linux-only")
+	}
+	set := loadMounts()
+	if set == nil {
+		t.Skip("no mountinfo available")
+	}
+	if _, ok := set["/"]; !ok {
+		t.Errorf("root must be a mount point, got %d entries", len(set))
+	}
+	for mp := range set {
+		if !strings.HasPrefix(mp, "/") {
+			t.Errorf("mount point %q is not absolute", mp)
+		}
+	}
+}
+
+func TestUnescapeMountPath(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"/mnt/simple", "/mnt/simple"},
+		{"/mnt/with\\040space", "/mnt/with space"},
+		{"/mnt/with\\011tab", "/mnt/with\ttab"},
+		{"/mnt/with\\134backslash", "/mnt/with\\backslash"},
+	}
+	for _, c := range cases {
+		got, ok := unescapeMountPath(c.in)
+		if !ok || got != c.want {
+			t.Errorf("unescapeMountPath(%q) = %q, %v; want %q, true", c.in, got, ok, c.want)
+		}
+	}
+	if _, ok := unescapeMountPath("/bad\\4suffix"); ok {
+		t.Error("truncated escape must be rejected")
+	}
+}
+
 func TestWorkerCountBounds(t *testing.T) {
 	n := workerCount(0)
 	if n < 2 || n > 32 {
@@ -446,7 +431,8 @@ func TestListDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ents, dirSize, _, subdirs, err := listDir(tmp)
+	lc := &listCtx{}
+	ents, dirSize, _, subdirs, err := listDir(lc, tmp, true, 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,5 +462,74 @@ func TestListDir(t *testing.T) {
 	}
 	if !sawFile || !sawDir {
 		t.Fatalf("missing entries: file=%v dir=%v (n=%d)", sawFile, sawDir, len(ents))
+	}
+}
+
+// Names handed out by listDir must stay valid across later listDir calls on
+// the same worker (reusable buffers and name slabs).
+func TestListDirNamesSurviveReuse(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	for _, name := range []string{"aaa", "bbb", "ccc"} {
+		if err := os.WriteFile(filepath.Join(dirA, name), []byte(name), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dirB, name), []byte(name), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	lc := &listCtx{}
+	entsA, _, _, _, err := listDir(lc, dirA, true, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := make([]walkEntry, len(entsA))
+	copy(first, entsA)
+	entsB, _, _, _, err := listDir(lc, dirB, true, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range first {
+		if e.name != "aaa" && e.name != "bbb" && e.name != "ccc" {
+			t.Fatalf("name corrupted by a later listDir call: %q", e.name)
+		}
+	}
+	if len(entsB) != len(first) {
+		t.Fatalf("second dir size mismatch: %d vs %d", len(entsB), len(first))
+	}
+}
+
+// Huge directories must fall back to a transient buffer instead of growing
+// the per-worker reusable buffer without bound.
+func TestListDirHugeDirFallback(t *testing.T) {
+	tmp := t.TempDir()
+	savedMax := entBufMax
+	entBufMax = 4
+	defer func() { entBufMax = savedMax }()
+
+	for i := 0; i < 10; i++ {
+		if err := os.WriteFile(filepath.Join(tmp, fmt.Sprintf("f%02d", i)), []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	lc := &listCtx{}
+	ents, _, _, _, err := listDir(lc, tmp, true, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ents) != 10 {
+		t.Fatalf("expected 10 entries, got %d", len(ents))
+	}
+	seen := make(map[string]bool)
+	for _, e := range ents {
+		if seen[e.name] {
+			t.Fatalf("duplicate entry %q", e.name)
+		}
+		seen[e.name] = true
+	}
+	if cap(lc.entries) > 4 {
+		t.Errorf("reusable buffer grew to %d, want capped at 4", cap(lc.entries))
 	}
 }

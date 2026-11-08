@@ -29,7 +29,7 @@ DISK EXPLORER  /home/user  ALL · size ↓  ⠋
 - **Auto-update** — checks for new releases at startup; `--update` upgrades to the latest binary
 - **SHA256 verification** — all downloaded binaries are verified against the release `SHA256SUMS` file
 - **Bash fallback** — full-featured Bash implementation for offline or unsupported environments
-- **Native SSH support** — scan remote hosts via the built-in SSH client (no system `ssh` required)
+- **Remote scans over SSH** — via the `disk-explorer.sh` distribution script and your system `ssh`; runs one scan per host and aggregates the reports (Go binary: not yet)
 
 ---
 
@@ -74,6 +74,8 @@ disk-explorer --mode partition /
 | `s` | Sort by size (press again to reverse) |
 | `n` | Sort by name (press again to reverse) |
 | `t` | Sort by modification date (press again to reverse) |
+| `u` | Install a downloaded update and restart (shown in the banner when ready) |
+| `i` | Ignore the downloaded update for this session |
 | `q` / `Ctrl+C` | Quit |
 
 ### Non-interactive modes
@@ -104,9 +106,17 @@ disk-explorer --scan-workers 4 --summary /mnt/archive
 
 ```bash
 disk-explorer --version          # print the current version
-disk-explorer --update           # download and cache the latest release
+disk-explorer --update           # download, verify and install the latest release
 disk-explorer --bash             # force the Bash fallback (skip Go binary)
 ```
+
+In the TUI, the update check runs in the background; when a newer release
+exists the binary is downloaded and verified automatically, the banner
+offers `[u] installer et redémarrer` or `[i] ignorer`. On `[u]` the
+verified binary atomically replaces the running one and disk-explorer
+relaunches itself on the same path and arguments. The installed updater
+requires the release SHA256SUMS entry to match; `--update` does the same
+without a restart prompt.
 
 ### Benchmark against ncdu
 
@@ -115,7 +125,7 @@ CGO_ENABLED=0 go build -o disk-explorer ./cmd/disk-explorer
 python3 benchmarks/compare_ncdu.py /path/to/directory
 ```
 
-The script alternates eight warm-cache runs and reports median completed-scan times. It runs `disk-explorer --summary` and `ncdu -0 --ignore-config -o /dev/null` on the same path. Their output work differs, so compare trends across directory shapes and storage devices rather than treating the ratio as a universal speed claim. On this Linux arm64 machine with four CPUs, a 100-directory, 20,000-empty-file tree scanned in about 16–18 ms versus 32–40 ms for ncdu 1.22, on both tmpfs and the repository filesystem. A flat 20,000-file directory took about 37–40 ms versus 33–36 ms for ncdu, and a 100-level chain remained slower.
+The script alternates eight warm-cache runs and reports median completed-scan times. It runs `disk-explorer --summary` and `ncdu -0 --ignore-config -o /dev/null` on the same path. Their output work differs, so compare trends across directory shapes and storage devices rather than treating the ratio as a universal speed claim. On a Raspberry Pi 5 (Linux arm64, four CPUs), /usr (166 000 entries, ext4, warm cache) scans in about 137 ms versus 383 ms for ncdu 1.22 (2.8x), and a synthetic 204 000-entry tmpfs tree in about 162 ms versus 295 ms (1.8x).
 
 The automatic scanner starts with one background worker and grows the pool when it discovers parallel directory work. The maximum follows `GOMAXPROCS` (four workers per CPU, capped at 32). Use `--scan-workers N` to cap it at 1–64 for storage where another limit performs better. Pass the same option to `benchmarks/compare_ncdu.py` to compare limits on your own machine.
 
@@ -126,6 +136,10 @@ For scanner-only Go measurements of wide and deep trees, run `go test ./internal
 ```bash
 disk-explorer --remote --remote-hosts user@host1,user@host2
 ```
+
+Runs through the `disk-explorer.sh` distribution script with your system `ssh`
+(each host is scanned over SSH and the reports are aggregated). The compiled
+Go binary does not offer this mode yet.
 
 ---
 
@@ -138,7 +152,7 @@ build.sh                 # assembles src/*.sh → disk-explorer.sh
 cmd/disk-explorer/       # Go entry point
 internal/
   tui/                   # Bubble Tea TUI (model, view, update loop)
-  scanner/               # depth-1 scanner, ScanTree, ScanTopFiles
+  scanner/               # parallel scanner: zero-copy listing, TopFiles, mountinfo
   display/               # non-interactive formatters (summary, tree)
   updater/               # GitHub release check and self-update
 src/                     # Bash implementation (fallback)
@@ -158,8 +172,8 @@ src/                     # Bash implementation (fallback)
 
 | Mode | Requirements |
 |------|-------------|
-| Go binary (default) | Linux or macOS, amd64 or arm64 |
-| Bash fallback | Bash ≥ 4.4, GNU coreutils (`find -printf`, `sort -z`, `du -0`, `head -z`) |
+| Go binary (default) | Linux or macOS. Static binaries (`CGO_ENABLED=0`) — any distro: glibc, musl/Alpine, Busybox. Linux archs: `amd64`, `386`, `arm` (ARMv6+ — Raspberry Pi 32-bit), `arm64`, `riscv64`, `ppc64le`, `s390x`, `loong64`, `mips`, `mipsle`, `mips64`, `mips64le` (MIPS builds use softfloat for FPU-less routers). macOS: `amd64`, `arm64`. `install.sh` and the `disk-explorer.sh` bootstrap auto-detect `uname -m`. |
+| Bash fallback | Bash ≥ 4.4, GNU coreutils (`find -printf`, `sort -z`, `du -0`, `head -z`) — used automatically when no binary matches |
 
 macOS Bash fallback: `brew install bash coreutils gawk findutils`
 

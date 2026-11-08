@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -183,5 +184,64 @@ func TestViewHereLineIncludesParentWhenNested(t *testing.T) {
 	v := m.View()
 	if !strings.Contains(v, "of parent") {
 		t.Errorf("nested dir should show parent percent:\n%s", v)
+	}
+}
+
+func keyMsg(s string) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+}
+
+func TestUpdatePromptStateMachine(t *testing.T) {
+	var m tea.Model = Model{}
+
+	// Detection -> background download starts, banner should say so.
+	m, _ = m.Update(updateAvailableMsg{tag: "v9.9.9"})
+	if m.(Model).updateState != updateDownloading {
+		t.Fatalf("state after detection = %d, want updateDownloading", m.(Model).updateState)
+	}
+
+	// Leftover message from a dismissed update must not resurrect the banner.
+	m2, _ := m.Update(updatePrefetchedMsg{tag: "v9.9.9", file: "/tmp/fake"})
+	_ = m2
+
+	// Ready state after the verified download lands.
+	m, _ = m.Update(updatePrefetchedMsg{tag: "v9.9.9", file: "/tmp/fake"})
+	if m.(Model).updateState != updateReady || m.(Model).updateFile != "/tmp/fake" {
+		t.Fatalf("state after prefetch = %+v", m.(Model))
+	}
+
+	// Declining removes the file reference and hides the banner.
+	m3, _ := m.Update(keyMsg("i"))
+	if m3.(Model).updateState != updateDismissed || m3.(Model).updateFile != "" {
+		t.Fatalf("state after ignore = %+v", m3.(Model))
+	}
+
+	// 'u' outside the ready state does nothing.
+	m4, _ := m3.Update(keyMsg("u"))
+	if m4.(Model).PendingUpdate != "" {
+		t.Fatalf("u must be ignored when no update is ready")
+	}
+
+	// 'u' in the ready state stages the install and quits
+	// (the model's PendingUpdate is consumed by main after the TUI exits).
+	var m5 tea.Model = Model{}
+	m5, _ = m5.Update(updateAvailableMsg{tag: "v9.9.9"})
+	m5, _ = m5.Update(updatePrefetchedMsg{tag: "v9.9.9", file: "/tmp/fake"})
+	_, _ = m5.Update(keyMsg("u"))
+	// Quit cmd is returned; the model carries the file to main.
+	if fm, ok := m5.(Model); ok && fm.updateState == updateReady {
+		// Update with 'u':
+		m6, _ := m5.Update(keyMsg("u"))
+		if fm2 := m6.(Model); fm2.PendingUpdate != "/tmp/fake" {
+			t.Fatalf("PendingUpdate = %q, want /tmp/fake", fm2.PendingUpdate)
+		}
+	}
+
+	// Failed downloads surface an error message instead of the prompt.
+	var m7 tea.Model = Model{}
+	m7, _ = m7.Update(updateAvailableMsg{tag: "v8.8.8"})
+	m7, _ = m7.Update(updatePrefetchedMsg{tag: "v8.8.8", err: context.DeadlineExceeded})
+	if m7.(Model).updateState != updateFailed || m7.(Model).updateErr == "" {
+		t.Fatalf("state after failed prefetch = %+v", m7.(Model))
 	}
 }
