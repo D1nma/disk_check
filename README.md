@@ -158,8 +158,8 @@ src/                     # Bash implementation (fallback)
 
 | Mode | Requirements |
 |------|-------------|
-| Go binary (default) | Linux or macOS, amd64 or arm64 |
-| Bash fallback | Bash ≥ 4.4, GNU coreutils (`find -printf`, `sort -z`, `du -0`, `head -z`) |
+| Go binary (default) | Linux or macOS. Static binaries (`CGO_ENABLED=0`) — any distro: glibc, musl/Alpine, Busybox. Linux archs: `amd64`, `386`, `arm` (ARMv6+ — Raspberry Pi 32-bit), `arm64`, `riscv64`, `ppc64le`, `s390x`, `loong64`, `mips`, `mipsle`, `mips64`, `mips64le` (MIPS builds use softfloat for FPU-less routers). macOS: `amd64`, `arm64`. `install.sh` and the `disk-explorer.sh` bootstrap auto-detect `uname -m`. |
+| Bash fallback | Bash ≥ 4.4, GNU coreutils (`find -printf`, `sort -z`, `du -0`, `head -z`) — used automatically when no binary matches |
 
 macOS Bash fallback: `brew install bash coreutils gawk findutils`
 

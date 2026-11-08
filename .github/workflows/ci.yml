@@ -25,3 +25,44 @@ jobs:
 
       - name: Lint (vet)
         run: go vet ./...
+
+  cross-compile:
+    # Guard every release target (see release.yml) so a broken build tag on
+    # any supported GOOS/GOARCH pair fails the PR instead of the release.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Cross-compile all release targets
+        run: |
+          targets="
+            linux/386
+            linux/amd64
+            linux/arm GOARM=6
+            linux/arm64
+            linux/loong64
+            linux/mips GOMIPS=softfloat
+            linux/mipsle GOMIPS=softfloat
+            linux/mips64 GOMIPS64=softfloat
+            linux/mips64le GOMIPS64=softfloat
+            linux/ppc64le
+            linux/riscv64
+            linux/s390x
+            darwin/amd64
+            darwin/arm64
+          "
+          failed=0
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            set -- $line
+            osarch="$1"; shift
+            GOOS="${osarch%%/*}" GOARCH="${osarch##*/}" CGO_ENABLED=0 \
+              env "$@" go build -o /dev/null ./cmd/disk-explorer \
+              || { echo "FAIL: $line"; failed=1; }
+          done <<< "$targets"
+          exit $failed
