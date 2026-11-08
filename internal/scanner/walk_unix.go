@@ -1,4 +1,4 @@
-//go:build unix
+//go:build unix && !linux
 
 package scanner
 
@@ -8,17 +8,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type walkEntry struct {
-	name    string
-	size    int64
-	modTime int64
-	isDir   bool
-	dev     uint64
-	ino     uint64
-	nlink   uint64
-}
+// listCtx is intentionally empty on non-Linux unix; listDir keeps the
+// simple allocation profile there. The release binaries target Linux and
+// macOS only.
+type listCtx struct{}
 
-func listDir(path string) (entries []walkEntry, dirSize int64, fsType int64, subdirs int, err error) {
+func listDir(_ *listCtx, path string, allowKernFS bool) (entries []walkEntry, dirSize int64, fsType int64, subdirs int, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, 0, 0, 0, err
@@ -33,6 +28,11 @@ func listDir(path string) (entries []walkEntry, dirSize int64, fsType int64, sub
 	var stfs unix.Statfs_t
 	if err := unix.Fstatfs(fd, &stfs); err == nil {
 		fsType = int64(stfs.Type)
+	}
+	// Same pseudo-filesystem shortcut as the Linux path: the caller drops
+	// these entries, so skip stat-ing them.
+	if !allowKernFS && isKernFS(fsType) {
+		return nil, dirSize, fsType, 0, nil
 	}
 
 	names, err := f.Readdirnames(-1)

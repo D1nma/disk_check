@@ -62,6 +62,12 @@ func (a *nodeArena) new() *Node {
 	return n
 }
 
+// scanWorker bundles the per-worker arena with the reusable listing buffers.
+type scanWorker struct {
+	nodes   nodeArena
+	listing listCtx
+}
+
 // Scan builds a full Node tree and reports progress via ScanProgress.
 func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgress {
 	ch := make(chan ScanProgress, 16)
@@ -116,15 +122,15 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 		var activeWorkers atomic.Int32
 		var growWorkers func(target int)
 
-		var processDir func(path string, node *Node, isRoot bool, arena *nodeArena)
-		processDir = func(path string, node *Node, isRoot bool, arena *nodeArena) {
+		var processDir func(path string, node *Node, isRoot bool, w *scanWorker)
+		processDir = func(path string, node *Node, isRoot bool, w *scanWorker) {
 			defer taskWg.Done()
 			if ctx.Err() != nil {
 				return
 			}
 			current.Store(path)
 
-			ents, dirSize, fsType, subdirs, err := listDir(path)
+			ents, dirSize, fsType, subdirs, err := listDir(&w.listing, path, isRoot)
 			if err != nil {
 				return
 			}
@@ -159,7 +165,7 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 					}
 				}
 
-				child := arena.new()
+				child := w.nodes.new()
 				*child = Node{
 					Name:    ent.name,
 					IsDir:   ent.isDir,
@@ -209,7 +215,7 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			}
 			node.Children = localChildren
 			for _, t := range leftover {
-				processDir(t.path, t.node, false, arena)
+				processDir(t.path, t.node, false, w)
 			}
 		}
 
@@ -244,9 +250,9 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			workerWg.Add(1)
 			go func() {
 				defer workerWg.Done()
-				var arena nodeArena
+				w := &scanWorker{}
 				for t := range taskCh {
-					processDir(t.path, t.node, false, &arena)
+					processDir(t.path, t.node, false, w)
 				}
 			}()
 		}
@@ -275,8 +281,8 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			taskWg.Wait()
 			close(taskCh)
 		}()
-		var rootArena nodeArena
-		processDir(abs, rootNode, true, &rootArena)
+		var rootWorker scanWorker
+		processDir(abs, rootNode, true, &rootWorker)
 		workerWg.Wait()
 		close(stopProgress)
 		progressWg.Wait()

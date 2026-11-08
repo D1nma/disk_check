@@ -394,7 +394,8 @@ func TestListDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ents, dirSize, _, subdirs, err := listDir(tmp)
+	lc := &listCtx{}
+	ents, dirSize, _, subdirs, err := listDir(lc, tmp, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,5 +425,74 @@ func TestListDir(t *testing.T) {
 	}
 	if !sawFile || !sawDir {
 		t.Fatalf("missing entries: file=%v dir=%v (n=%d)", sawFile, sawDir, len(ents))
+	}
+}
+
+// Names handed out by listDir must stay valid across later listDir calls on
+// the same worker (reusable buffers and name slabs).
+func TestListDirNamesSurviveReuse(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	for _, name := range []string{"aaa", "bbb", "ccc"} {
+		if err := os.WriteFile(filepath.Join(dirA, name), []byte(name), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dirB, name), []byte(name), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	lc := &listCtx{}
+	entsA, _, _, _, err := listDir(lc, dirA, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := make([]walkEntry, len(entsA))
+	copy(first, entsA)
+	entsB, _, _, _, err := listDir(lc, dirB, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range first {
+		if e.name != "aaa" && e.name != "bbb" && e.name != "ccc" {
+			t.Fatalf("name corrupted by a later listDir call: %q", e.name)
+		}
+	}
+	if len(entsB) != len(first) {
+		t.Fatalf("second dir size mismatch: %d vs %d", len(entsB), len(first))
+	}
+}
+
+// Huge directories must fall back to a transient buffer instead of growing
+// the per-worker reusable buffer without bound.
+func TestListDirHugeDirFallback(t *testing.T) {
+	tmp := t.TempDir()
+	savedMax := entBufMax
+	entBufMax = 4
+	defer func() { entBufMax = savedMax }()
+
+	for i := 0; i < 10; i++ {
+		if err := os.WriteFile(filepath.Join(tmp, fmt.Sprintf("f%02d", i)), []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	lc := &listCtx{}
+	ents, _, _, _, err := listDir(lc, tmp, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ents) != 10 {
+		t.Fatalf("expected 10 entries, got %d", len(ents))
+	}
+	seen := make(map[string]bool)
+	for _, e := range ents {
+		if seen[e.name] {
+			t.Fatalf("duplicate entry %q", e.name)
+		}
+		seen[e.name] = true
+	}
+	if cap(lc.entries) > 4 {
+		t.Errorf("reusable buffer grew to %d, want capped at 4", cap(lc.entries))
 	}
 }

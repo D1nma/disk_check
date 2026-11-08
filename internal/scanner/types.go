@@ -2,6 +2,18 @@ package scanner
 
 import "os"
 
+// walkEntry is one directory entry during a scan; produced by listDir,
+// consumed by processDir.
+type walkEntry struct {
+	name    string
+	size    int64
+	modTime int64
+	isDir   bool
+	dev     uint64
+	ino     uint64
+	nlink   uint64
+}
+
 type ScanOptions struct {
 	SameDevice bool     // like du -x: stay on same filesystem
 	Excludes   []string // absolute paths to skip
