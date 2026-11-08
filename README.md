@@ -74,6 +74,8 @@ disk-explorer --mode partition /
 | `s` | Sort by size (press again to reverse) |
 | `n` | Sort by name (press again to reverse) |
 | `t` | Sort by modification date (press again to reverse) |
+| `u` | Install a downloaded update and restart (shown in the banner when ready) |
+| `i` | Ignore the downloaded update for this session |
 | `q` / `Ctrl+C` | Quit |
 
 ### Non-interactive modes
@@ -104,9 +106,17 @@ disk-explorer --scan-workers 4 --summary /mnt/archive
 
 ```bash
 disk-explorer --version          # print the current version
-disk-explorer --update           # download and cache the latest release
+disk-explorer --update           # download, verify and install the latest release
 disk-explorer --bash             # force the Bash fallback (skip Go binary)
 ```
+
+In the TUI, the update check runs in the background; when a newer release
+exists the binary is downloaded and verified automatically, the banner
+offers `[u] installer et redémarrer` or `[i] ignorer`. On `[u]` the
+verified binary atomically replaces the running one and disk-explorer
+relaunches itself on the same path and arguments. The installed updater
+requires the release SHA256SUMS entry to match; `--update` does the same
+without a restart prompt.
 
 ### Benchmark against ncdu
 

@@ -45,7 +45,7 @@ func TestVerifyChecksum(t *testing.T) {
 	}
 }
 
-func TestSelfUpdate(t *testing.T) {
+func TestPrefetchAndInstall(t *testing.T) {
 	name := fmt.Sprintf("disk-explorer-%s-%s", runtime.GOOS, runtime.GOARCH)
 	binary := []byte("fake binary")
 	sum := sha256.Sum256(binary)
@@ -67,9 +67,6 @@ func TestSelfUpdate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			home := t.TempDir()
-			t.Setenv("HOME", home)
-
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case strings.HasSuffix(r.URL.Path, "/SHA256SUMS"):
@@ -91,22 +88,54 @@ func TestSelfUpdate(t *testing.T) {
 			repoURL = srv.URL
 			defer func() { repoURL = orig }()
 
-			err := SelfUpdate(tt.tag)
+			file, err := Prefetch(tt.tag)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("SelfUpdate(%q) error = %v, wantErr %v", tt.tag, err, tt.wantErr)
+				t.Fatalf("Prefetch(%q) error = %v, wantErr %v", tt.tag, err, tt.wantErr)
 			}
 
-			target := filepath.Join(home, ".cache", "disk-explorer", "bin", tt.tag, "disk-explorer")
-			_, statErr := os.Stat(target)
-			if tt.wantErr && statErr == nil {
-				t.Errorf("target %s written despite failure", target)
+			exe, _ := os.Executable()
+			exeDir := filepath.Dir(exe)
+			if tt.wantErr {
+				if file != "" {
+					t.Errorf("Prefetch returned %q on failure", file)
+				}
+				leftovers, _ := filepath.Glob(filepath.Join(exeDir, "disk-explorer-*.tmp"))
+				if len(leftovers) > 0 {
+					t.Errorf("temp files left behind after failure: %v", leftovers)
+					for _, l := range leftovers {
+						os.Remove(l)
+					}
+				}
+				return
 			}
-			if !tt.wantErr && statErr != nil {
-				t.Errorf("target %s not written: %v", target, statErr)
+
+			got, err := os.ReadFile(file)
+			if err != nil || string(got) != string(binary) {
+				t.Fatalf("prefetched content mismatch: %q %v", got, err)
 			}
-			leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(target), "*.tmp"))
+			info, err := os.Stat(file)
+			if err != nil || info.Mode()&0111 == 0 {
+				t.Fatalf("prefetched file not executable: %v %v", info, err)
+			}
+
+			// installTo renames the verified file into place atomically.
+			dst := filepath.Join(t.TempDir(), "disk-explorer")
+			if err := installTo(file, dst); err != nil {
+				t.Fatalf("installTo: %v", err)
+			}
+			gotDst, err := os.ReadFile(dst)
+			if err != nil || string(gotDst) != string(binary) {
+				t.Fatalf("installed content mismatch: %q %v", gotDst, err)
+			}
+			if _, err := os.Stat(file); !os.IsNotExist(err) {
+				t.Errorf("source file not consumed by the rename")
+			}
+			leftovers, _ := filepath.Glob(filepath.Join(exeDir, "disk-explorer-*.tmp"))
 			if len(leftovers) > 0 {
 				t.Errorf("temp files left behind: %v", leftovers)
+				for _, l := range leftovers {
+					os.Remove(l)
+				}
 			}
 		})
 	}

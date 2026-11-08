@@ -59,57 +59,81 @@ func UpdateAvailable(current string) (string, bool) {
 	return latest, true
 }
 
-// SelfUpdate downloads the binary for tag and stores it in the cache directory.
-func SelfUpdate(tag string) error {
+// Prefetch downloads the release binary for tag, verifies it against the
+// release SHA256SUMS, and leaves it as a tempfile next to the running
+// executable so Install can swap it in with an atomic rename. It does not
+// touch the running binary.
+func Prefetch(tag string) (string, error) {
 	if !releaseTag.MatchString(tag) {
-		return fmt.Errorf("invalid release tag %q", tag)
+		return "", fmt.Errorf("invalid release tag %q", tag)
 	}
-	goos := runtime.GOOS
-	goarch := runtime.GOARCH
-
-	name := fmt.Sprintf("disk-explorer-%s-%s", goos, goarch)
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Dir(exe)
+	name := fmt.Sprintf("disk-explorer-%s-%s", runtime.GOOS, runtime.GOARCH)
 	binURL := fmt.Sprintf("%s/releases/download/%s/%s", repoURL, tag, name)
 	sumsURL := fmt.Sprintf("%s/releases/download/%s/SHA256SUMS", repoURL, tag)
 
-	cacheDir := filepath.Join(os.Getenv("HOME"), ".cache", "disk-explorer", "bin", tag)
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
-		return err
-	}
-	target := filepath.Join(cacheDir, "disk-explorer")
-	// Unique temp name: two concurrent updates must not write the same file.
-	tmpFile, err := os.CreateTemp(cacheDir, "disk-explorer-*.tmp")
+	tmpFile, err := os.CreateTemp(dir, "disk-explorer-*.tmp")
 	if err != nil {
-		return err
+		return "", err
 	}
 	tmp := tmpFile.Name()
 	tmpFile.Close()
 
-	fmt.Fprintf(os.Stderr, "Téléchargement de disk-explorer %s (%s/%s)...\n", tag, goos, goarch)
 	if err := downloadFile(binURL, tmp); err != nil {
 		os.Remove(tmp)
-		return fmt.Errorf("download: %w", err)
+		return "", fmt.Errorf("download: %w", err)
 	}
 
 	sums, err := fetchText(sumsURL)
 	if err != nil {
 		os.Remove(tmp)
-		return fmt.Errorf("checksum list unavailable: %w", err)
+		return "", fmt.Errorf("checksum list unavailable: %w", err)
 	}
 	if err := verifyChecksum(tmp, name, sums); err != nil {
 		os.Remove(tmp)
-		return fmt.Errorf("checksum: %w", err)
+		return "", fmt.Errorf("checksum: %w", err)
 	}
-	fmt.Fprintln(os.Stderr, "Checksum OK")
-
 	if err := os.Chmod(tmp, 0755); err != nil {
 		os.Remove(tmp)
+		return "", err
+	}
+	return tmp, nil
+}
+
+// Install atomically replaces the running executable with the prefetched,
+// already-verified file. The running process keeps its old inode (Linux and
+// macOS semantics), so this is safe to call from inside the app.
+func Install(file string) error {
+	exe, err := os.Executable()
+	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, target); err != nil {
+	return installTo(file, exe)
+}
+
+func installTo(file, dest string) error {
+	if err := os.Chmod(file, 0755); err != nil {
+		return err
+	}
+	return os.Rename(file, dest)
+}
+
+// SelfUpdate downloads, verifies and installs the release for tag over the
+// running executable. The caller decides whether to restart the process.
+func SelfUpdate(tag string) error {
+	tmp, err := Prefetch(tag)
+	if err != nil {
+		return err
+	}
+	if err := Install(tmp); err != nil {
 		os.Remove(tmp)
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Mise à jour installée : %s\n", target)
+	fmt.Fprintf(os.Stderr, "Mise à jour installée : relancez disk-explorer pour utiliser %s\n", tag)
 	return nil
 }
 
