@@ -68,7 +68,7 @@ bats tests/is_integer.bats --filter "is_integer: zero"
 |---------|------|
 | `cmd/disk-explorer` | Entry point: flag parsing, mode dispatch (TUI / summary / report / tree / update) |
 | `internal/tui` | Bubble Tea model; handles keyboard navigation (O(1)) and state transitions between scanning and browsing |
-| `internal/scanner` | `Scan()` — parallel recursive scan that builds a complete `Node` tree; `ScanTree()` — recursive tree up to maxDepth; `ScanTopFiles()` — top N files by disk usage |
+| `internal/scanner` | `Scan()` — parallel recursive scan that builds a complete `Node` tree; `TopFiles()` — top N files by disk usage |
 | `internal/display` | Non-interactive output: `Summary()`, `Tree()`, `FormatSize()` |
 | `internal/updater` | `LatestRelease()` — GitHub API; `UpdateAvailable()` — compare versions; `SelfUpdate()` — download + SHA256 verify + atomic rename |
 
@@ -85,7 +85,7 @@ bats tests/is_integer.bats --filter "is_integer: zero"
 
 ### Key Go design decisions
 
-**Parallel recursive scanner with post-scan aggregation.** `scanner.Scan()` performs a high-performance parallel walk of the entire filesystem. It builds a bidirectional tree in memory. Size and count aggregation is performed in a fast post-scan pass to minimize mutex contention. A semaphore of 64 limits concurrency to saturate modern SSDs.
+**Parallel recursive scanner with post-scan aggregation.** `scanner.Scan()` performs a high-performance parallel walk of the entire filesystem. It builds a bidirectional tree in memory. Size and count aggregation is performed in a fast post-scan pass to minimize mutex contention. Workers grow on demand when the queue fills, capped at `GOMAXPROCS×4` (32) by default; `--scan-workers` allows 1–64. Linux listing is zero-copy (raw getdents64 parsing, slab-interned names, direct newfstatat), and filesystem types are inherited from `/proc/self/mountinfo` except at mount roots.
 
 **Instant O(1) navigation.** After the initial scan, the TUI enters a browsing state where all navigation (Enter, Backspace) only involves updating a pointer to the existing tree. No further disk I/O occurs during navigation.
 
@@ -93,9 +93,9 @@ bats tests/is_integer.bats --filter "is_integer: zero"
 
 **`blockSize` uses `Stat_t.Blocks * 512`.** All size measurements use actual disk allocation (512-byte blocks × number of blocks), not apparent file size, matching `du` behavior.
 
-**`ScanTree` builds a tree by bounded recursion.** At leaf depth (`currentDepth >= maxDepth`), it calls `sumDir()` for the cumulative size. At inner depths, it recurses, accumulating child sizes. Children are sorted by size descending before being stored.
+**`--tree` derives from the full scan.** `runTree` drains the same parallel `Scan()` and `display.Tree` renders a depth-limited view. Directory sizes shown by `--tree` are du-style content sizes (`Node.Size - Node.OwnSize`, the inode's own blocks excluded), and hardlinks are counted once, so `--tree`, `--summary`, and the TUI agree on every number. The line renderer is fmt-free but byte-identical to the previous output.
 
-**Non-interactive modes share the same scanner.** `--summary` drains `scanner.Scan()` synchronously; `--tree` calls `scanner.ScanTree()`; `--report` wraps `--summary` output in an atomic file write (tmp + rename). No TUI is started.
+**Non-interactive modes share the same scanner.** `--summary` drains `scanner.Scan()` synchronously; `--tree` does the same and renders a depth-limited view; `--report` wraps `--summary` output in an atomic file write (tmp + rename). No TUI is started.
 
 **Background update check in TUI.** A goroutine calls `updater.UpdateAvailable()` (5 s HTTP timeout) and sends to `UpdateChan` if a newer release exists. The TUI model listens via `listenForUpdate()` and shows a yellow footer banner on receipt. The check is skipped for `"dev"` builds.
 
