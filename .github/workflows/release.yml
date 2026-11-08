@@ -43,7 +43,7 @@ jobs:
         run: |
           VERSION="${{ github.ref_name }}"
           OUTPUT="disk-explorer-${{ matrix.goos }}-${{ matrix.goarch }}"
-          go build -ldflags "-X main.version=${VERSION}" -o "${OUTPUT}" ./cmd/disk-explorer
+          go build -ldflags "-s -w -X main.version=${VERSION}" -o "${OUTPUT}" ./cmd/disk-explorer
           sha256sum "${OUTPUT}" > "${OUTPUT}.sha256"
 
       - name: Upload artifact
