@@ -13,7 +13,7 @@ import (
 // macOS only.
 type listCtx struct{}
 
-func listDir(_ *listCtx, path string, allowKernFS bool) (entries []walkEntry, dirSize int64, fsType int64, subdirs int, err error) {
+func listDir(_ *listCtx, path string, wantStat bool, fsHint int64, allowKern bool) (entries []walkEntry, dirSize int64, fsType int64, subdirs int, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, 0, 0, 0, err
@@ -25,13 +25,19 @@ func listDir(_ *listCtx, path string, allowKernFS bool) (entries []walkEntry, di
 	if err := unix.Fstat(fd, &st); err == nil {
 		dirSize = st.Blocks * 512
 	}
-	var stfs unix.Statfs_t
-	if err := unix.Fstatfs(fd, &stfs); err == nil {
-		fsType = int64(stfs.Type)
+	if wantStat {
+		var stfs unix.Statfs_t
+		if err := unix.Fstatfs(fd, &stfs); err == nil {
+			fsType = int64(stfs.Type)
+		} else {
+			fsType = fsHint
+		}
+	} else {
+		fsType = fsHint
 	}
 	// Same pseudo-filesystem shortcut as the Linux path: the caller drops
-	// these entries, so skip stat-ing them.
-	if !allowKernFS && isKernFS(fsType) {
+	// these entries, so skip stat-ing them (roots still list their entries).
+	if !allowKern && fsType != 0 && isKernFS(fsType) {
 		return nil, dirSize, fsType, 0, nil
 	}
 

@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	direntBufSize = 64 << 10 // getdents64 buffer reused per worker
-	nameSlabSize  = 32 << 10 // name chunk per worker; strings point into it
-	direntNameOff = 19       // offset of d_name inside linux_dirent64
+	direntBufSize = 128 << 10 // getdents64 buffer reused per worker
+	nameSlabSize  = 32 << 10  // name chunk per worker; strings point into it
+	direntNameOff = 19        // offset of d_name inside linux_dirent64
 )
 
 // entBufMax caps the per-worker reusable entry buffer. Directories larger
@@ -47,7 +47,7 @@ func (lc *listCtx) slabString(name []byte) string {
 	return unsafe.String(&lc.slab[start], len(name))
 }
 
-func listDir(lc *listCtx, path string, allowKernFS bool) (entries []walkEntry, dirSize int64, fsType int64, subdirs int, err error) {
+func listDir(lc *listCtx, path string, wantStat bool, fsHint int64, allowKern bool) (entries []walkEntry, dirSize int64, fsType int64, subdirs int, err error) {
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, 0, 0, 0, err
@@ -59,14 +59,19 @@ func listDir(lc *listCtx, path string, allowKernFS bool) (entries []walkEntry, d
 		return nil, 0, 0, 0, err
 	}
 	dirSize = st.Blocks * 512
-	var stfs unix.Statfs_t
-	if err := unix.Fstatfs(fd, &stfs); err != nil {
-		return nil, dirSize, 0, 0, err
+	if wantStat {
+		var stfs unix.Statfs_t
+		if err := unix.Fstatfs(fd, &stfs); err != nil {
+			return nil, dirSize, 0, 0, err
+		}
+		fsType = int64(stfs.Type)
+	} else {
+		fsType = fsHint
 	}
-	fsType = int64(stfs.Type)
 	// Pseudo-filesystems (proc, sysfs, ...) are dropped by the caller anyway;
-	// skip their entries instead of stat-ing them first.
-	if !allowKernFS && isKernFS(fsType) {
+	// skip their entries instead of stat-ing them first (the root scan of a
+	// pseudo-filesystem itself still lists entries).
+	if !allowKern && fsType != 0 && isKernFS(fsType) {
 		return nil, dirSize, fsType, 0, nil
 	}
 

@@ -36,8 +36,9 @@ type inodeKey struct {
 }
 
 type dirTask struct {
-	path string
-	node *Node
+	path   string
+	node   *Node
+	fsType int64 // filesystem type of the parent, inherited when no mount is crossed
 }
 
 func joinPath(dir, name string) string {
@@ -116,21 +117,35 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 		if branchThreshold < 2 {
 			branchThreshold = 2
 		}
+		// Mount roots are the only places where the filesystem type can
+		// change; everywhere else it is inherited from the parent, saving
+		// one fstatfs per directory. loadMounts()==nil (no mountinfo)
+		// falls back to stat-ing every directory.
+		mounts := loadMounts()
 		taskCh := make(chan dirTask, nWorkers*4)
 		var taskWg sync.WaitGroup
 		var workerWg sync.WaitGroup
 		var activeWorkers atomic.Int32
 		var growWorkers func(target int)
 
-		var processDir func(path string, node *Node, isRoot bool, w *scanWorker)
-		processDir = func(path string, node *Node, isRoot bool, w *scanWorker) {
+		var processDir func(path string, node *Node, isRoot bool, w *scanWorker, parentFs int64)
+		processDir = func(path string, node *Node, isRoot bool, w *scanWorker, parentFs int64) {
 			defer taskWg.Done()
 			if ctx.Err() != nil {
 				return
 			}
 			current.Store(path)
 
-			ents, dirSize, fsType, subdirs, err := listDir(&w.listing, path, isRoot)
+			// The filesystem type can only change at a mount root.
+			wantStat := isRoot || parentFs == 0
+			if !wantStat {
+				if mounts == nil {
+					wantStat = true
+				} else if _, onMount := mounts[path]; onMount {
+					wantStat = true
+				}
+			}
+			ents, dirSize, fsType, subdirs, err := listDir(&w.listing, path, wantStat, parentFs, isRoot)
 			if err != nil {
 				return
 			}
@@ -192,7 +207,7 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 				} else {
 					localDirs++
 					taskWg.Add(1)
-					t := dirTask{childPath, child}
+					t := dirTask{path: childPath, node: child, fsType: fsType}
 					select {
 					case taskCh <- t:
 						if pending := len(taskCh); pending > int(activeWorkers.Load()) {
@@ -215,7 +230,7 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			}
 			node.Children = localChildren
 			for _, t := range leftover {
-				processDir(t.path, t.node, false, w)
+				processDir(t.path, t.node, false, w, t.fsType)
 			}
 		}
 
@@ -252,7 +267,7 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 				defer workerWg.Done()
 				w := &scanWorker{}
 				for t := range taskCh {
-					processDir(t.path, t.node, false, w)
+					processDir(t.path, t.node, false, w, t.fsType)
 				}
 			}()
 		}
@@ -282,7 +297,7 @@ func Scan(ctx context.Context, root string, opts ScanOptions) <-chan ScanProgres
 			close(taskCh)
 		}()
 		var rootWorker scanWorker
-		processDir(abs, rootNode, true, &rootWorker)
+		processDir(abs, rootNode, true, &rootWorker, 0)
 		workerWg.Wait()
 		close(stopProgress)
 		progressWg.Wait()

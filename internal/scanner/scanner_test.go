@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -345,6 +346,42 @@ func TestScanHardlinkCountedOnce(t *testing.T) {
 	}
 }
 
+func TestLoadMounts(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("mountinfo is Linux-only")
+	}
+	set := loadMounts()
+	if set == nil {
+		t.Skip("no mountinfo available")
+	}
+	if _, ok := set["/"]; !ok {
+		t.Errorf("root must be a mount point, got %d entries", len(set))
+	}
+	for mp := range set {
+		if !strings.HasPrefix(mp, "/") {
+			t.Errorf("mount point %q is not absolute", mp)
+		}
+	}
+}
+
+func TestUnescapeMountPath(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"/mnt/simple", "/mnt/simple"},
+		{"/mnt/with\\040space", "/mnt/with space"},
+		{"/mnt/with\\011tab", "/mnt/with\ttab"},
+		{"/mnt/with\\134backslash", "/mnt/with\\backslash"},
+	}
+	for _, c := range cases {
+		got, ok := unescapeMountPath(c.in)
+		if !ok || got != c.want {
+			t.Errorf("unescapeMountPath(%q) = %q, %v; want %q, true", c.in, got, ok, c.want)
+		}
+	}
+	if _, ok := unescapeMountPath("/bad\\4suffix"); ok {
+		t.Error("truncated escape must be rejected")
+	}
+}
+
 func TestWorkerCountBounds(t *testing.T) {
 	n := workerCount(0)
 	if n < 2 || n > 32 {
@@ -395,7 +432,7 @@ func TestListDir(t *testing.T) {
 	}
 
 	lc := &listCtx{}
-	ents, dirSize, _, subdirs, err := listDir(lc, tmp, true)
+	ents, dirSize, _, subdirs, err := listDir(lc, tmp, true, 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,13 +480,13 @@ func TestListDirNamesSurviveReuse(t *testing.T) {
 	}
 
 	lc := &listCtx{}
-	entsA, _, _, _, err := listDir(lc, dirA, true)
+	entsA, _, _, _, err := listDir(lc, dirA, true, 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	first := make([]walkEntry, len(entsA))
 	copy(first, entsA)
-	entsB, _, _, _, err := listDir(lc, dirB, true)
+	entsB, _, _, _, err := listDir(lc, dirB, true, 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +515,7 @@ func TestListDirHugeDirFallback(t *testing.T) {
 	}
 
 	lc := &listCtx{}
-	ents, _, _, _, err := listDir(lc, tmp, true)
+	ents, _, _, _, err := listDir(lc, tmp, true, 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}
