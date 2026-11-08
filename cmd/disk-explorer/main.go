@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -190,9 +189,7 @@ func runTree(w io.Writer, path string, opts scanner.ScanOptions, maxDepth int) {
 		fmt.Fprintf(os.Stderr, "Error: cannot access %s\n", path)
 		os.Exit(1)
 	}
-	bw := bufio.NewWriter(w)
-	defer bw.Flush()
-	display.Tree(bw, res.Root, maxDepth)
+	display.Tree(w, res.Root, maxDepth)
 }
 
 func runTUI(path string, opts scanner.ScanOptions) {
