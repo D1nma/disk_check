@@ -2,6 +2,10 @@
 
 This file provides context and instructions for the `disk-explorer` Go rewrite.
 
+> `CLAUDE.md` is the reference for architecture, build, tests and CI, and
+> `AGENTS.md` for review guidelines; this file is a short overview. When they
+> disagree, trust `CLAUDE.md` and the code.
+
 ## Project Overview
 
 `disk-explorer` is a hybrid Go/Bash tool for exploring disk usage. It combines the performance and interactivity of Go with the portability of a Bash script.
@@ -17,10 +21,11 @@ The project is structured as a Go application that is distributed via a Bash wra
 
 2.  **Bash Wrapper (`disk-explorer.sh`)**:
     *   Acts as a **bootstrap script**.
-    *   Detects OS (Linux/macOS) and Architecture (amd64/arm64).
+    *   Detects OS (Linux/macOS) and architecture (14 release targets).
     *   Checks for a cached Go binary in `~/.cache/disk-explorer/bin/`.
     *   Automatically downloads missing binaries from GitHub Releases.
-    *   **Fallback**: Seamlessly executes the embedded Bash implementation if the Go binary fails to download or run.
+    *   Translates the Bash flags that have a Go equivalent; Bash-only options (`--remote`, `--self-check`, …) run the Bash implementation.
+    *   **Fallback**: executes the Bash implementation if the Go binary cannot be downloaded.
 
 ## Building and Running
 
@@ -44,9 +49,10 @@ The project is structured as a Go application that is distributed via a Bash wra
 ## Development Conventions
 
 ### Go
-*   **Concurrency**: Use `context.Context` for cancelling scans when navigating.
+*   **Concurrency**: Use `context.Context` to cancel scans (quit, rescan).
 *   **TUI**: Follow the Bubble Tea Model-Update-View pattern.
-*   **Streaming**: Use channels to stream `ScanProgress` objects from the scanner to the TUI during the scanning phase.
+*   **Streaming**: Use channels to stream `ScanProgress` objects from the scanner to the TUI during the scanning phase; the final message carries `Root` or `Err`.
+*   **Untrusted names**: always `textsafe.Clean` before printing.
 
 ### Bash (Fallback Logic)
 *   **Modular**: Edits should be made in `src/*.sh`, then run `./build.sh`.

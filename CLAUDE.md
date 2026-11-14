@@ -55,6 +55,8 @@ bats tests/is_integer.bats
 bats tests/platform_compat.bats
 ```
 
+The bats `setup()` restores bats' own EXIT trap after sourcing the script (whose `trap cleanup EXIT` would otherwise make failing tests vanish from the report).
+
 Both suites work by sourcing `disk-explorer.sh` and calling internal functions directly. The `BASH_SOURCE[0] == $0` guard in `main.sh` prevents `main()` from executing on source.
 
 To run a single bats test by name:
@@ -68,11 +70,18 @@ bats tests/is_integer.bats --filter "is_integer: zero"
 
 | Package | Role |
 |---------|------|
-| `cmd/disk-explorer` | Entry point: flag parsing, mode dispatch (TUI / summary / report / tree / update) |
-| `internal/tui` | Bubble Tea model; handles keyboard navigation (O(1)) and state transitions between scanning and browsing |
-| `internal/scanner` | `Scan()` — parallel recursive scan that builds a complete `Node` tree; `TopFiles()` — top N files by disk usage |
-| `internal/display` | Non-interactive output: `Summary()`, `Tree()`, `FormatSize()` |
-| `internal/updater` | `LatestRelease()` — GitHub API; `UpdateAvailable()` — compare versions; `SelfUpdate()` — download + SHA256 verify + atomic rename |
+| `cmd/disk-explorer` | Entry point: `run()` (testable), flag parsing, sources (local scan, `--import`, `--ssh`), combinable outputs, TUI wiring (`hooks.go`), fleet table (`fleet.go`), exit codes 0/1/2/64 |
+| `internal/tui` | Bubble Tea model (`model.go`), rendering (`view.go`), marks/plan/delete/rescan/OSC 52 (`actions.go`); optional `Hooks` for annotations, df-vs-scan and live activity |
+| `internal/scanner` | `Scan()` — parallel scan building the full `Node` tree plus results (errors, `Pinned`/`Freeable`, `DevBytes`, `Recent`, `Expected`); `TopFiles()`; `Analyze()` for imported trees |
+| `internal/display` | Non-interactive output: `Summary()`, `SummaryJSON()`, `Tree()`, `FormatSize()` |
+| `internal/snapshot` | Scan history: `FromTree`, `Store.Save/Latest`, `Delta`, `TopGrowth` |
+| `internal/reconcile` | df vs scan: `Stat()` (statfs + mountinfo), `DeletedOpen()` (/proc), `Build/Render/Lines` |
+| `internal/live` | `FillMeter` (fill rate, ETA), `Tracker` (writers and growing files from /proc) |
+| `internal/annotate` | Path labels (Docker, podman, containerd, Kubernetes, system caches, dev artifacts) and cleanup commands |
+| `internal/export` | ncdu JSON `WriteNcdu`/`ReadNcdu` (streaming), Prometheus `WriteProm` |
+| `internal/remote` | Agentless SSH scan: probe, push binary, `--export -`, read back |
+| `internal/textsafe` | `Clean()` — neutralise control chars, escapes, bidi overrides in untrusted names |
+| `internal/updater` | `LatestRelease()`, `Newer()` (semver), `UpdateAvailable()`, `CheckEnabled()`, `FetchBinary()` (any GOOS/GOARCH, SHA256-verified), `SelfUpdate()` |
 
 ### Bash modules
 
@@ -89,6 +98,16 @@ bats tests/is_integer.bats --filter "is_integer: zero"
 
 **Parallel recursive scanner with post-scan aggregation.** `scanner.Scan()` performs a high-performance parallel walk of the entire filesystem. It builds a bidirectional tree in memory. Size and count aggregation is performed in a fast post-scan pass to minimize mutex contention. Workers grow on demand when the queue fills, capped at `GOMAXPROCS×4` (32) by default; `--scan-workers` allows 1–64. Linux listing is zero-copy (raw getdents64 parsing, slab-interned names, direct newfstatat), and filesystem types are inherited from `/proc/self/mountinfo` except at mount roots.
 
+**Errors are part of the result.** A missing/unreadable root ends the scan with `ScanProgress.Err` (the TUI quits with the message, CLI exits 1). Unreadable directories (or entries failing `fstatat` with anything but `ENOENT`) get `FlagUnreadable`, ancestors `FlagPartial`; they are listed in `Errors` and make non-interactive modes exit 2.
+
+**Deterministic hard links.** Files with `nlink > 1` are collected per worker (no lock while walking) and attributed after the walk to the smallest path; other links get size 0 and `FlagHardlink`. `Pinned` records bytes a deletion would not free (links outside the subtree or the scan); use `scanner.Freeable(n, pinned)`.
+
+**Every name printed is untrusted.** Always pass names, paths, process and container names through `textsafe.Clean` before writing them to a terminal or a report comment. The cleanup plan leaves out paths with control characters rather than quoting them.
+
+**Snapshots drive growth and progress.** `cmd` loads the latest snapshot of (root, mode, excludes) before scanning (`ExpectedHint`, Δ column) and saves a new one after. `scanner.expectedEntries` uses statfs used-inode counts when the root is a mount point.
+
+**Remote and imported trees are read-only.** `tui.Model.Imported` disables delete, rescan, statfs and local hooks; `cmd` never wires `localHooks()` for them. The remote command is a single-quoted POSIX sh script with no `'` or `\` inside, so it works under any login shell; user values are validated by `remote.checkRemoteArg`.
+
 **Instant O(1) navigation.** After the initial scan, the TUI enters a browsing state where all navigation (Enter, Backspace) only involves updating a pointer to the existing tree. No further disk I/O occurs during navigation.
 
 **Generation counter for stale-message rejection.** `Model.generation` is incremented on every navigation. `progressMsg` carries the generation at which it was dispatched; messages from a previous generation are silently dropped.
@@ -99,7 +118,7 @@ bats tests/is_integer.bats --filter "is_integer: zero"
 
 **Non-interactive modes share the same scanner.** `--summary` drains `scanner.Scan()` synchronously; `--tree` does the same and renders a depth-limited view; `--report` wraps `--summary` output in an atomic file write (tmp + rename). No TUI is started.
 
-**Background update check in TUI.** A goroutine calls `updater.UpdateAvailable()` (5 s HTTP timeout) and sends to `UpdateChan` if a newer release exists. The TUI model listens via `listenForUpdate()` and shows a yellow footer banner on receipt. The check is skipped for `"dev"` builds.
+**Background update check in TUI.** A goroutine calls `updater.UpdateAvailable()` (5 s HTTP timeout, semver comparison) and sends to `UpdateChan` if a newer release exists. The TUI model listens via `listenForUpdate()` and shows a yellow footer banner on receipt. The check is skipped for `"dev"` builds and when `DISK_EXPLORER_NO_UPDATE` is set; when the binary's directory is not writable the banner only announces the release.
 
 ### Key Bash design decisions
 
@@ -119,8 +138,8 @@ bats tests/is_integer.bats --filter "is_integer: zero"
 
 | Workflow | Trigger | Action |
 |----------|---------|--------|
-| `ci.yml` | Push / PR to `main` | `go build ./...`, `go test ./...`, `go vet ./...` |
-| `release.yml` | Push of a `v*` tag | Build 4 platform binaries with version ldflags, generate `SHA256SUMS`, publish GitHub Release |
+| `ci.yml` | Push / PR to `main` | gofmt, `go vet`, `go test -race ./...`; macOS `go test`; Bash: `build.sh` sync check, shellcheck (errors), `tests/run_tests.sh`, bats; cross-compile of every release target |
+| `release.yml` | Push of a `v*` tag | Build 14 static binaries (12 Linux archs, 2 macOS) with version ldflags, generate `SHA256SUMS`, publish GitHub Release |
 
 Go version is read from `go.mod` via `go-version-file: 'go.mod'` in `actions/setup-go`.
 
@@ -133,7 +152,7 @@ git push origin v1.2.3
 
 ## Platform support
 
-**Go binary**: Linux and macOS, amd64 and arm64. Built with `CGO_ENABLED=0` for static linking.
+**Go binary**: Linux (amd64, 386, arm v6+, arm64, riscv64, ppc64le, s390x, loong64, mips/mipsle/mips64/mips64le softfloat) and macOS (amd64, arm64). Built with `CGO_ENABLED=0` for static linking. `/proc`-based features (`live.Tracker`, `reconcile.DeletedOpen`, mountinfo) are Linux-only behind build tags with stubs; Linux-only tests live in `*_linux_test.go`.
 
 **Bash fallback**: GNU/Linux and macOS (with Homebrew GNU coreutils). Requires Bash ≥ 4.4. The shim at the top of `main.sh` re-execs via `/opt/homebrew/bin/bash` or `/usr/local/bin/bash` on macOS when the system Bash is too old.
 
