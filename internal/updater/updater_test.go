@@ -140,3 +140,32 @@ func TestPrefetchAndInstall(t *testing.T) {
 		})
 	}
 }
+
+func TestNewer(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"v2.3.0", "v2.2.0", true},
+		{"v2.2.0", "v2.3.0-rc1", false}, // must not offer a downgrade
+		{"v2.3.0", "v2.3.0-rc1", true},
+		{"v2.3.0-rc2", "v2.3.0-rc1", true},
+		{"v2.2.0", "v2.2.0", false},
+		{"v2.10.0", "v2.9.9", true},
+		{"v3", "v2.9.9", true},
+		{"garbage", "v1.0.0", false},
+		{"v1.0.0", "dev", false},
+	}
+	for _, c := range cases {
+		if got := Newer(c.a, c.b); got != c.want {
+			t.Errorf("Newer(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestCheckEnabled(t *testing.T) {
+	t.Setenv("DISK_EXPLORER_NO_UPDATE", "1")
+	if CheckEnabled() {
+		t.Fatal("DISK_EXPLORER_NO_UPDATE must disable the check")
+	}
+}

@@ -46,17 +46,100 @@ func LatestRelease() (string, error) {
 	return payload.TagName, nil
 }
 
-// UpdateAvailable returns (latestTag, true) when a newer version exists.
-// Returns ("", false) for dev builds or when the check fails.
+// UpdateAvailable returns (latestTag, true) when a strictly newer version
+// exists. Returns ("", false) for dev builds or when the check fails.
 func UpdateAvailable(current string) (string, bool) {
 	if current == "dev" || current == "" || !strings.HasPrefix(current, "v") {
 		return "", false
 	}
 	latest, err := LatestRelease()
-	if err != nil || latest == "" || latest == current {
+	if err != nil || latest == "" || !Newer(latest, current) {
 		return latest, false
 	}
 	return latest, true
+}
+
+// CheckEnabled reports whether the background update check may contact
+// GitHub: it is off when DISK_EXPLORER_NO_UPDATE is set (air-gapped
+// servers, package-managed installs, privacy).
+func CheckEnabled() bool {
+	return os.Getenv("DISK_EXPLORER_NO_UPDATE") == ""
+}
+
+// CanSelfUpdate reports whether the running binary can be replaced in place
+// (its directory is writable). When it cannot (root-owned /usr/local/bin,
+// package manager), the TUI only announces the release.
+func CanSelfUpdate() bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	f, err := os.CreateTemp(filepath.Dir(exe), ".disk-explorer-write-test-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	f.Close()
+	os.Remove(name)
+	return true
+}
+
+// Newer reports whether release tag a is a strictly higher version than b
+// (vMAJOR.MINOR.PATCH[-pre]; a pre-release sorts before its release). Tags
+// that do not parse are never considered newer, so a malformed answer from
+// the API cannot trigger a "downgrade".
+func Newer(a, b string) bool {
+	va, okA := parseVersion(a)
+	vb, okB := parseVersion(b)
+	if !okA || !okB {
+		return false
+	}
+	for i := 0; i < 3; i++ {
+		if va.num[i] != vb.num[i] {
+			return va.num[i] > vb.num[i]
+		}
+	}
+	switch {
+	case va.pre == vb.pre:
+		return false
+	case va.pre == "":
+		return true // release > its pre-release
+	case vb.pre == "":
+		return false
+	}
+	return va.pre > vb.pre
+}
+
+type version struct {
+	num [3]int
+	pre string
+}
+
+func parseVersion(s string) (version, bool) {
+	var v version
+	if !releaseTag.MatchString(s) {
+		return v, false
+	}
+	s = strings.TrimPrefix(s, "v")
+	if i := strings.IndexByte(s, '-'); i >= 0 {
+		v.pre = s[i+1:]
+		s = s[:i]
+	}
+	parts := strings.Split(s, ".")
+	if len(parts) > 3 {
+		return v, false
+	}
+	for i, p := range parts {
+		n := 0
+		for _, c := range p {
+			n = n*10 + int(c-'0')
+			if n > 1<<24 {
+				return v, false
+			}
+		}
+		v.num[i] = n
+	}
+	return v, true
 }
 
 // Prefetch downloads the release binary for tag, verifies it against the
