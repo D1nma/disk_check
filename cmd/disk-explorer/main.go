@@ -2,109 +2,171 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/D1nma/disk_check/internal/display"
 	"github.com/D1nma/disk_check/internal/scanner"
+	"github.com/D1nma/disk_check/internal/snapshot"
 	"github.com/D1nma/disk_check/internal/tui"
 	"github.com/D1nma/disk_check/internal/updater"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/term"
 )
 
 var version = "dev"
 
-func main() {
-	var (
-		mode        string
-		excludes    []string
-		doSummary   bool
-		doReport    bool
-		doTree      bool
-		doUpdate    bool
-		showVersion bool
-		treeDepth   int
-		topN        int
-		reportDir   string
-		scanWorkers int
-	)
+// Exit codes. 2 matches the Bash implementation's "partial scan" code, so
+// usage errors use 64 (EX_USAGE) to stay distinguishable.
+const (
+	exitOK      = 0
+	exitFatal   = 1
+	exitPartial = 2
+	exitUsage   = 64
+)
 
-	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
-	flag.BoolVar(&doUpdate, "update", false, "Download the latest release and exit")
-	flag.StringVar(&mode, "mode", "global", "Analysis mode: global (all filesystems) or partition (same device only)")
-	flag.Func("exclude", "Absolute or relative path to skip (repeatable)", func(path string) error {
+type config struct {
+	mode        string
+	excludes    []string
+	doSummary   bool
+	doReport    bool
+	doTree      bool
+	doJSON      bool
+	doUpdate    bool
+	showVersion bool
+	treeDepth   int
+	topN        int
+	reportDir   string
+	scanWorkers int
+	noSnapshot  bool
+	readOnly    bool
+	path        string
+}
+
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func parseArgs(args []string, stderr io.Writer) (*config, error) {
+	cfg := &config{}
+	fs := flag.NewFlagSet("disk-explorer", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.BoolVar(&cfg.showVersion, "version", false, "Affiche la version et quitte")
+	fs.BoolVar(&cfg.doUpdate, "update", false, "Télécharge et installe la dernière version, puis quitte")
+	fs.StringVar(&cfg.mode, "mode", "global", "global (tous les systèmes de fichiers) ou partition (même périphérique, comme du -x)")
+	fs.Func("exclude", "Chemin à ignorer (répétable)", func(path string) error {
 		if path == "" {
-			return fmt.Errorf("exclude path cannot be empty")
+			return fmt.Errorf("le chemin à exclure ne peut pas être vide")
 		}
 		abs, err := filepath.Abs(path)
 		if err != nil {
 			return err
 		}
-		excludes = append(excludes, abs)
+		cfg.excludes = append(cfg.excludes, abs)
 		return nil
 	})
-	flag.BoolVar(&doSummary, "summary", false, "Print disk summary and exit")
-	flag.BoolVar(&doReport, "report", false, "Write report to file and exit")
-	flag.BoolVar(&doTree, "tree", false, "Print tree view and exit")
-	flag.IntVar(&treeDepth, "tree-depth", 3, "Max depth for --tree")
-	flag.IntVar(&topN, "top", 20, "Number of top entries to show in --summary/--report")
-	flag.StringVar(&reportDir, "report-dir", ".", "Output directory for --report")
-	flag.IntVar(&scanWorkers, "scan-workers", 0, "Maximum background scan workers (0 = automatic, 1-64 = fixed limit)")
-	flag.Parse()
-	if scanWorkers < 0 || scanWorkers > 64 {
-		fmt.Fprintln(os.Stderr, "--scan-workers must be between 0 and 64")
-		os.Exit(2)
+	fs.BoolVar(&cfg.doSummary, "summary", false, "Affiche un résumé et quitte")
+	fs.BoolVar(&cfg.doReport, "report", false, "Écrit le résumé dans un fichier et quitte")
+	fs.BoolVar(&cfg.doTree, "tree", false, "Affiche l'arborescence et quitte")
+	fs.BoolVar(&cfg.doJSON, "json", false, "Résumé au format JSON sur la sortie standard")
+	fs.IntVar(&cfg.treeDepth, "tree-depth", 3, "Profondeur max pour --tree")
+	fs.IntVar(&cfg.topN, "top", 20, "Nombre d'entrées dans --summary/--report/--json")
+	fs.StringVar(&cfg.reportDir, "report-dir", ".", "Dossier de sortie pour --report")
+	fs.IntVar(&cfg.scanWorkers, "scan-workers", 0, "Workers de scan max (0 = automatique, 1-64 = limite fixe)")
+	fs.BoolVar(&cfg.noSnapshot, "no-snapshot", false, "N'enregistre pas d'instantané (historique de croissance)")
+	fs.BoolVar(&cfg.readOnly, "read-only", false, "TUI : interdit la suppression")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if cfg.scanWorkers < 0 || cfg.scanWorkers > 64 {
+		return nil, fmt.Errorf("--scan-workers doit être entre 0 et 64")
+	}
+	if cfg.mode != "global" && cfg.mode != "partition" {
+		return nil, fmt.Errorf("--mode invalide %q (global ou partition)", cfg.mode)
+	}
+	if cfg.topN < 1 {
+		return nil, fmt.Errorf("--top doit être >= 1")
+	}
+	cfg.path = "."
+	switch rest := fs.Args(); len(rest) {
+	case 0:
+	case 1:
+		cfg.path = rest[0]
+	default:
+		return nil, fmt.Errorf("un seul chemin attendu, reçu : %s", strings.Join(rest, " "))
+	}
+	return cfg, nil
+}
+
+func run(args []string, stdout, stderr io.Writer) int {
+	cfg, err := parseArgs(args, stderr)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return exitOK
+		}
+		if !strings.HasPrefix(err.Error(), "flag ") { // flag errors are already printed with usage
+			fmt.Fprintf(stderr, "Erreur : %v\n", err)
+		}
+		return exitUsage
 	}
 
-	if showVersion {
-		fmt.Printf("disk-explorer %s\n", version)
-		return
+	if cfg.showVersion {
+		fmt.Fprintf(stdout, "disk-explorer %s\n", version)
+		return exitOK
 	}
-
-	if doUpdate {
-		tag, err := updater.LatestRelease()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Erreur: impossible de vérifier la dernière version: %v\n", err)
-			os.Exit(1)
-		}
-		if tag == version {
-			fmt.Printf("Déjà à jour (%s)\n", version)
-			return
-		}
-		if err := updater.SelfUpdate(tag); err != nil {
-			fmt.Fprintf(os.Stderr, "Erreur de mise à jour: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	path := "."
-	if args := flag.Args(); len(args) > 0 {
-		path = args[0]
+	if cfg.doUpdate {
+		return runUpdate(stdout, stderr)
 	}
 
 	opts := scanner.ScanOptions{
-		SameDevice: mode == "partition",
-		Excludes:   excludes,
-		Workers:    scanWorkers,
+		SameDevice: cfg.mode == "partition",
+		Excludes:   cfg.excludes,
+		Workers:    cfg.scanWorkers,
 	}
 
 	switch {
-	case doSummary:
-		runSummary(os.Stdout, path, opts, topN)
-	case doReport:
-		runReport(path, opts, topN, reportDir)
-	case doTree:
-		runTree(os.Stdout, path, opts, treeDepth)
+	case cfg.doSummary || cfg.doJSON:
+		return runSummary(stdout, stderr, cfg, opts)
+	case cfg.doReport:
+		return runReport(stdout, stderr, cfg, opts)
+	case cfg.doTree:
+		return runTree(stdout, stderr, cfg, opts)
+	case !isTerminal(stdout):
+		// Piped or redirected output gets the summary, like the Bash version.
+		return runSummary(stdout, stderr, cfg, opts)
 	default:
-		runTUI(path, opts)
+		return runTUI(stderr, cfg, opts)
 	}
+}
+
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	return ok && term.IsTerminal(f.Fd())
+}
+
+func runUpdate(stdout, stderr io.Writer) int {
+	tag, err := updater.LatestRelease()
+	if err != nil {
+		fmt.Fprintf(stderr, "Erreur : impossible de vérifier la dernière version : %v\n", err)
+		return exitFatal
+	}
+	if !updater.Newer(tag, version) {
+		fmt.Fprintf(stdout, "Déjà à jour (%s ; dernière publiée : %s)\n", version, tag)
+		return exitOK
+	}
+	if err := updater.SelfUpdate(tag); err != nil {
+		fmt.Fprintf(stderr, "Erreur de mise à jour : %v\n", err)
+		return exitFatal
+	}
+	return exitOK
 }
 
 func getDiskInfo(path string) display.DiskInfo {
@@ -120,116 +182,232 @@ func getDiskInfo(path string) display.DiskInfo {
 	}
 }
 
-func collectRoot(path string, opts scanner.ScanOptions) scanner.ScanProgress {
-	ch := scanner.Scan(context.Background(), path, opts)
-	var lastProgress scanner.ScanProgress
-	for p := range ch {
-		lastProgress = p
+// snapshotID names a scan for the history: same root, mode and exclusions.
+func snapshotID(abs string, excludes []string) string {
+	if len(excludes) == 0 {
+		return abs
 	}
-	return lastProgress
+	ex := append([]string(nil), excludes...)
+	sort.Strings(ex)
+	return abs + "|exclude:" + strings.Join(ex, ":")
 }
 
-func writeSummary(w io.Writer, path string, opts scanner.ScanOptions, topN int) {
-	res := collectRoot(path, opts)
-	root := res.Root
-	var entries []*scanner.Node
-	var topFiles []*scanner.Node
-	if root != nil {
-		sort.Slice(root.Children, func(i, j int) bool {
-			return root.Children[i].Size > root.Children[j].Size
-		})
-		entries = root.Children
-		if topN <= len(res.TopFiles) {
-			topFiles = res.TopFiles[:topN]
-		} else {
-			topFiles = scanner.TopFiles(root, topN)
+// history bundles the snapshot store and the previous snapshot of a root.
+type history struct {
+	store *snapshot.Store // nil when disabled
+	id    string
+	mode  string
+	prev  *snapshot.Snapshot
+}
+
+func loadHistory(cfg *config, abs string) history {
+	h := history{id: snapshotID(abs, cfg.excludes), mode: cfg.mode}
+	if cfg.noSnapshot || !snapshot.Enabled() {
+		return h
+	}
+	st, err := snapshot.DefaultStore()
+	if err != nil {
+		return h
+	}
+	h.store = &st
+	h.prev, _ = st.Latest(h.id, h.mode)
+	return h
+}
+
+func (h history) save(res scanner.ScanProgress, stderr io.Writer) {
+	if h.store == nil || res.Root == nil {
+		return
+	}
+	snap := snapshot.FromTree(res.Root, h.id, h.mode, int64(res.Files+res.Dirs), time.Now())
+	if err := h.store.Save(snap); err != nil {
+		fmt.Fprintf(stderr, "Avertissement : instantané non enregistré : %v\n", err)
+	}
+}
+
+// scanAll runs a synchronous scan with history: the previous snapshot gives
+// the expected entry count, the new one is saved afterwards.
+func scanAll(cfg *config, opts scanner.ScanOptions, stderr io.Writer) (scanner.ScanProgress, history, error) {
+	abs, err := filepath.Abs(cfg.path)
+	if err != nil {
+		abs = cfg.path
+	}
+	h := loadHistory(cfg, abs)
+	if h.prev != nil {
+		opts.ExpectedHint = h.prev.Entries
+	}
+	var last scanner.ScanProgress
+	for p := range scanner.Scan(context.Background(), cfg.path, opts) {
+		last = p
+	}
+	if last.Err != nil {
+		return last, h, last.Err
+	}
+	if last.Root == nil {
+		return last, h, fmt.Errorf("%s : scan interrompu", abs)
+	}
+	h.save(last, stderr)
+	return last, h, nil
+}
+
+func summaryData(res scanner.ScanProgress, h history, cfg *config) display.SummaryData {
+	d := display.SummaryData{
+		Root:       res.Root,
+		TopFiles:   res.TopFiles,
+		Disk:       getDiskInfo(cfg.path),
+		TopN:       cfg.topN,
+		ErrorCount: res.ErrorCount,
+		Errors:     res.Errors,
+		Recent:     res.Recent[res.Root],
+		Pinned:     res.Pinned,
+	}
+	if cfg.topN > len(res.TopFiles) {
+		d.TopFiles = scanner.TopFiles(res.Root, cfg.topN)
+	}
+	if h.prev != nil {
+		d.Since = h.prev.Time
+		d.Growth = h.prev.TopGrowth(res.Root, cfg.topN)
+	}
+	return d
+}
+
+func exitFor(res scanner.ScanProgress) int {
+	if res.ErrorCount > 0 {
+		return exitPartial
+	}
+	return exitOK
+}
+
+func runSummary(stdout, stderr io.Writer, cfg *config, opts scanner.ScanOptions) int {
+	res, h, err := scanAll(cfg, opts, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "Erreur : %v\n", err)
+		return exitFatal
+	}
+	d := summaryData(res, h, cfg)
+	if cfg.doJSON {
+		if err := display.SummaryJSON(stdout, d); err != nil {
+			fmt.Fprintf(stderr, "Erreur : %v\n", err)
+			return exitFatal
 		}
+	} else {
+		display.Summary(stdout, d)
 	}
-	di := getDiskInfo(path)
-	display.Summary(w, path, root, entries, topFiles, di, topN)
+	return exitFor(res)
 }
 
-func runSummary(w io.Writer, path string, opts scanner.ScanOptions, topN int) {
-	writeSummary(w, path, opts, topN)
-}
-
-func runReport(path string, opts scanner.ScanOptions, topN int, reportDir string) {
-	if err := os.MkdirAll(reportDir, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+func runReport(stdout, stderr io.Writer, cfg *config, opts scanner.ScanOptions) int {
+	if err := os.MkdirAll(cfg.reportDir, 0o755); err != nil {
+		fmt.Fprintf(stderr, "Erreur : %v\n", err)
+		return exitFatal
+	}
+	res, h, err := scanAll(cfg, opts, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "Erreur : %v\n", err)
+		return exitFatal
 	}
 
-	safeName := filepath.Base(path)
+	safeName := filepath.Base(res.Root.Path())
 	if safeName == "" || safeName == "." || safeName == "/" {
 		safeName = "root"
 	}
 	ts := time.Now().Format("2006-01-02_15-04-05")
-	reportPath := filepath.Join(reportDir, fmt.Sprintf("Report_%s_%s.txt", safeName, ts))
+	reportPath := filepath.Join(cfg.reportDir, fmt.Sprintf("Report_%s_%s.txt", safeName, ts))
 
-	tmp := reportPath + ".tmp"
-	f, err := os.Create(tmp)
+	tmp, err := os.CreateTemp(cfg.reportDir, ".report-*.tmp")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "Erreur : %v\n", err)
+		return exitFatal
 	}
-	writeSummary(f, path, opts, topN)
-	f.Close()
-
-	if err := os.Rename(tmp, reportPath); err != nil {
-		os.Remove(tmp)
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	display.Summary(tmp, summaryData(res, h, cfg))
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		fmt.Fprintf(stderr, "Erreur : %v\n", err)
+		return exitFatal
 	}
-	fmt.Printf("Rapport créé : %s\n", reportPath)
+	if err := os.Rename(tmp.Name(), reportPath); err != nil {
+		os.Remove(tmp.Name())
+		fmt.Fprintf(stderr, "Erreur : %v\n", err)
+		return exitFatal
+	}
+	fmt.Fprintf(stdout, "Rapport créé : %s\n", reportPath)
+	return exitFor(res)
 }
 
-func runTree(w io.Writer, path string, opts scanner.ScanOptions, maxDepth int) {
-	res := collectRoot(path, opts)
-	if res.Root == nil {
-		fmt.Fprintf(os.Stderr, "Error: cannot access %s\n", path)
-		os.Exit(1)
+func runTree(stdout, stderr io.Writer, cfg *config, opts scanner.ScanOptions) int {
+	res, _, err := scanAll(cfg, opts, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "Erreur : %v\n", err)
+		return exitFatal
 	}
-	display.Tree(w, res.Root, maxDepth)
+	display.Tree(stdout, res.Root, cfg.treeDepth)
+	if res.ErrorCount > 0 {
+		fmt.Fprintf(stderr, "Avertissement : %d dossier(s) illisible(s), tailles sous-estimées\n", res.ErrorCount)
+	}
+	return exitFor(res)
 }
 
-func runTUI(path string, opts scanner.ScanOptions) {
+func runTUI(stderr io.Writer, cfg *config, opts scanner.ScanOptions) int {
+	abs, err := filepath.Abs(cfg.path)
+	if err != nil {
+		abs = cfg.path
+	}
+	h := loadHistory(cfg, abs)
+	if h.prev != nil {
+		opts.ExpectedHint = h.prev.Entries
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
-	ch := scanner.Scan(ctx, path, opts)
+	defer cancel()
+	ch := scanner.Scan(ctx, cfg.path, opts)
 
 	// Background update check — notifies TUI model when a new version is found
 	updateCh := make(chan string, 1)
-	go func() {
-		if latest, ok := updater.UpdateAvailable(version); ok {
-			updateCh <- latest
-		}
-	}()
+	if updater.CheckEnabled() {
+		go func() {
+			if latest, ok := updater.UpdateAvailable(version); ok {
+				updateCh <- latest
+			}
+		}()
+	}
 
 	m := tui.Model{
-		Path:        path,
+		Path:        abs,
 		Version:     version,
 		State:       tui.StateScanning,
 		ScannerChan: ch,
 		UpdateChan:  updateCh,
 		CancelScan:  cancel,
 		ScanOpts:    opts,
+		ReadOnly:    cfg.readOnly,
+		Prev:        h.prev,
+		SaveSnapshot: func(res scanner.ScanProgress) {
+			h.save(res, io.Discard)
+		},
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithInputTTY())
 	finalModel, err := p.Run()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "Erreur : %v\n", err)
+		return exitFatal
 	}
 
 	fm, ok := finalModel.(tui.Model)
-	if !ok || fm.PendingUpdate == "" {
-		return
+	if !ok {
+		return exitOK
+	}
+	if fm.FatalErr != nil {
+		fmt.Fprintf(stderr, "Erreur : %v\n", fm.FatalErr)
+		return exitFatal
+	}
+	if fm.PendingUpdate == "" {
+		return exitOK
 	}
 	// The user accepted the update: the TUI has exited and the terminal is
 	// restored. Install the prefetched binary and re-exec in place.
 	if err := updater.Install(fm.PendingUpdate); err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur pendant l'installation de la mise à jour: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "Erreur pendant l'installation de la mise à jour : %v\n", err)
+		return exitFatal
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -237,7 +415,8 @@ func runTUI(path string, opts scanner.ScanOptions) {
 	}
 	fmt.Println("Mise à jour installée — relance de disk-explorer…")
 	if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur au redémarrage (%v) — relancez disk-explorer manuellement\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "Erreur au redémarrage (%v) — relancez disk-explorer manuellement\n", err)
+		return exitFatal
 	}
+	return exitOK
 }
