@@ -80,10 +80,12 @@ func (m Model) headerLines() []string {
 	if m.Version != "" && m.Version != "dev" {
 		ver = "  " + dimStyle.Render(m.Version)
 	}
-	if m.ReadOnly {
+	if m.Imported {
+		ver += "  " + dimStyle.Render("distant/importé · lecture seule")
+	} else if m.ReadOnly {
 		ver += "  " + dimStyle.Render("lecture seule")
 	}
-	header := fmt.Sprintf("DISK EXPLORER  %s  %s · %s%s", textsafe.Clean(m.Path), modeLabel, sortLabel, scanMark)
+	header := fmt.Sprintf("DISK EXPLORER  %s  %s · %s%s", textsafe.Clean(m.hostPrefix+m.Path), modeLabel, sortLabel, scanMark)
 	lines = append(lines, boldStyle.Render(header)+ver)
 
 	if m.diskTotal > 0 {
@@ -305,7 +307,7 @@ func (m Model) View() string {
 
 func (m Model) progressLines(w int) []string {
 	p := m.Progress
-	lines := []string{"", fmt.Sprintf("  Analyse en cours : %s", textsafe.Clean(m.Path)), ""}
+	lines := []string{"", fmt.Sprintf("  Analyse en cours : %s", textsafe.Clean(m.hostPrefix+m.Path)), ""}
 	seen := int64(p.Files + p.Dirs)
 	if p.Expected > 0 {
 		frac := float64(seen) / float64(p.Expected)

@@ -88,6 +88,12 @@ func (m Model) planText(now time.Time) string {
 	marked := m.markedRoots()
 	total, free := m.markTotals()
 	host, _ := os.Hostname()
+	if m.Imported {
+		host = strings.TrimSuffix(m.hostPrefix, ":")
+		if host == "" {
+			host = "(import)"
+		}
+	}
 	var b strings.Builder
 	b.WriteString("#!/bin/sh\n")
 	fmt.Fprintf(&b, "# Plan de nettoyage généré par disk-explorer %s le %s\n", textsafe.Clean(m.Version), now.Format("2006-01-02 15:04:05"))
@@ -160,6 +166,10 @@ func (m Model) writePlan() (string, error) {
 // ── Deletion ─────────────────────────────────────────────────────────────────
 
 func (m *Model) askDelete(nodes []*scanner.Node) {
+	if m.Imported {
+		m.status, m.statusErr = "Scan distant ou importé : suppression impossible d'ici — marquez puis [m] [x] pour un plan à exécuter sur l'hôte", true
+		return
+	}
 	if m.ReadOnly {
 		m.status, m.statusErr = "Mode lecture seule (--read-only) : suppression désactivée", true
 		return

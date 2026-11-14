@@ -168,6 +168,16 @@ type Model struct {
 	ReadOnly    bool
 	Hooks       Hooks
 
+	// Imported marks a tree that is not this machine's live filesystem (an
+	// export, a remote host): no deletion, rescan, statfs or local hooks.
+	Imported bool
+	// Source labels an imported tree, e.g. "web1:/var".
+	Source string
+	// Disk is the filesystem usage (total, used, avail) of an imported tree;
+	// DiskOnDone, when set, provides it once the scan completes instead.
+	Disk       [3]int64
+	DiskOnDone func() [3]int64
+
 	// Prev is the previous snapshot of this root (growth column); nil if none.
 	Prev *snapshot.Snapshot
 	// SaveSnapshot is called once, in the background, when the scan completes.
@@ -226,10 +236,14 @@ type Model struct {
 	status     string
 	statusErr  bool
 	rescanning *scanner.Node
+	hostPrefix string // "web1:" for a remote tree, shown before paths
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{fetchDiskInfo(m.Path), spinTick()}
+	cmds := []tea.Cmd{spinTick()}
+	if !m.Imported {
+		cmds = append(cmds, fetchDiskInfo(m.Path))
+	}
 	if m.ScannerChan != nil {
 		cmds = append(cmds, listenForProgress(m.ScannerChan, m.generation))
 	}
@@ -341,6 +355,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scanErrs = msg.progress.Errors
 			m.errorCount = msg.progress.ErrorCount
 			m.Path = m.Current.Path()
+			if m.Imported {
+				m.ReadOnly = true
+				disk := m.Disk
+				if m.DiskOnDone != nil {
+					disk = m.DiskOnDone()
+				}
+				m.diskTotal, m.diskUsed, m.diskAvail = disk[0], disk[1], disk[2]
+				if root := m.Root.Path(); m.Source != root && strings.HasSuffix(m.Source, root) {
+					m.hostPrefix = strings.TrimSuffix(m.Source, root)
+				}
+			}
 			m.Entries = m.Current.Children
 			m.sortEntries()
 			var cmd tea.Cmd
@@ -500,6 +525,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.copyPath(m.Entries[m.Selected].Path())
 		}
 	case "r":
+		if m.Imported {
+			m.status = "Rescan indisponible : ce scan vient d'un autre hôte ou d'un fichier"
+			return m, nil
+		}
 		return m.startRescan(m.Current)
 	}
 	return m, nil
@@ -759,7 +788,7 @@ func (m Model) reveal(n *scanner.Node) (tea.Model, tea.Cmd) {
 
 // onDirChange refreshes what depends on the filesystem of the current directory.
 func (m Model) onDirChange() tea.Cmd {
-	if m.Current == nil {
+	if m.Current == nil || m.Imported {
 		return nil
 	}
 	// The filesystem can only change at a mount root; statfs is one syscall,
