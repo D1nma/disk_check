@@ -49,7 +49,7 @@ Installs the binary to `~/.local/bin`. Override with `DISK_EXPLORER_INSTALL_DIR=
 curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh | bash
 ```
 
-On a tagged release, the script downloads and caches the binary automatically. On untagged builds (or offline), it runs the full Bash fallback.
+The script downloads, verifies and caches the Go binary of the release it was built from: the exact tag, or else the latest release tag reachable from its commit, so the copy on `main` uses the latest release. It runs the binary when every option has a Go equivalent (`--path DIR` becomes the positional path, `--top-count N` becomes `--top N`). Bash-only options (`--remote*`, `--self-check`, `--sort mtime`, `--file-size apparent`, `--max-depth`, `--top-files`, `--no-default-excludes`, `--help`, `--bash`) use the full Bash fallback. So do builds with no release tag and runs where the download fails (for example offline).
 
 ---
 
@@ -107,7 +107,7 @@ disk-explorer --scan-workers 4 --summary /mnt/archive
 ```bash
 disk-explorer --version          # print the current version
 disk-explorer --update           # download, verify and install the latest release
-disk-explorer --bash             # force the Bash fallback (skip Go binary)
+disk-explorer.sh --bash          # distribution script: force the Bash fallback (skip Go binary)
 ```
 
 In the TUI, the update check runs in the background; when a newer release
@@ -173,7 +173,7 @@ src/                     # Bash implementation (fallback)
 | Mode | Requirements |
 |------|-------------|
 | Go binary (default) | Linux or macOS. Static binaries (`CGO_ENABLED=0`) — any distro: glibc, musl/Alpine, Busybox. Linux archs: `amd64`, `386`, `arm` (ARMv6+ — Raspberry Pi 32-bit), `arm64`, `riscv64`, `ppc64le`, `s390x`, `loong64`, `mips`, `mipsle`, `mips64`, `mips64le` (MIPS builds use softfloat for FPU-less routers). macOS: `amd64`, `arm64`. `install.sh` and the `disk-explorer.sh` bootstrap auto-detect `uname -m`. |
-| Bash fallback | Bash ≥ 4.4, GNU coreutils (`find -printf`, `sort -z`, `du -0`, `head -z`) — used automatically when no binary matches |
+| Bash fallback | Bash ≥ 4.4, GNU coreutils (`find -printf`, `sort -z`, `du -0`, `head -z`) — used automatically when no binary matches, the build has no release tag, or an option is Bash-only |
 
 macOS Bash fallback: `brew install bash coreutils gawk findutils`
 

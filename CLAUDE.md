@@ -26,7 +26,9 @@ go build -ldflags "-X main.version=v1.2.3" -o disk-explorer ./cmd/disk-explorer
 ```
 
 The build concatenates modules in this order: `main.sh` header (inline code before the first function definition), then `utils.sh`, `scan.sh`, `display.sh`, `tui.sh`, `remote.sh`, then `main.sh` footer (all functions). After assembly, `bash -n` validates syntax before replacing the output file.
-`VERSION` in the assembled script is set to the exact git tag (`git describe --tags --exact-match`) when on a tagged commit, or the short git hash otherwise. Only exact tag versions trigger binary download in `try_go_binary`.
+`build.sh` rewrites two placeholder lines in the `main.sh` header, using only release tags (`v[0-9]*`):
+- `VERSION` (display): the exact tag on a tagged commit, otherwise `git describe --tags` (`<latest-tag>-<n>-g<hash>`), otherwise the short hash (`dev` outside a git repo).
+- `BINARY_TAG` (bootstrap): the exact tag, otherwise the latest reachable tag (`git describe --tags --abbrev=0`), otherwise empty. `try_go_binary` and the binary cache (`~/.cache/disk-explorer/bin/$BINARY_TAG`) use it, and run only when it matches `^v[0-9]`. A rebuild on an untagged commit of `main` therefore keeps the latest release's binary. When no tag is reachable (or tags were not fetched), the script runs Bash only.
 
 **Always run `build.sh` after editing any `src/*.sh` file** — the source files are authoritative, `disk-explorer.sh` is generated.
 
@@ -76,7 +78,7 @@ bats tests/is_integer.bats --filter "is_integer: zero"
 
 | File | Role |
 |------|------|
-| `src/main.sh` | Constants, global variables, traps, arg parsing, `main()` dispatch |
+| `src/main.sh` | Constants, global variables, traps, Go bootstrap (`try_go_binary`, `go_args_from_bash_args`, `download_binary`), arg parsing, `main()` dispatch |
 | `src/utils.sh` | Pure helpers: `die`, `human_size`, `sanitize_for_display`, `is_integer`, platform detection, `date_from_epoch` |
 | `src/scan.sh` | Disk scanning: `build_du_cmd`, `build_find_prefix`, `scan_subdirs_to_file`, `scan_top_files_to_file`, temp file management, exclusion state |
 | `src/display.sh` | Non-interactive outputs: `print_summary`, `print_tree_view`, `generate_report_file`, `self_check_report` |
@@ -100,6 +102,8 @@ bats tests/is_integer.bats --filter "is_integer: zero"
 **Background update check in TUI.** A goroutine calls `updater.UpdateAvailable()` (5 s HTTP timeout) and sends to `UpdateChan` if a newer release exists. The TUI model listens via `listenForUpdate()` and shows a yellow footer banner on receipt. The check is skipped for `"dev"` builds.
 
 ### Key Bash design decisions
+
+**Bootstrap execs the Go binary only with translated flags.** The Go CLI (stdlib `flag`) exits 2 on any flag it does not define. `go_args_from_bash_args` (pure, fills `GO_ARGS`) maps the flags that have an exact Go equivalent (`--path DIR` → positional, `--top-count N` → `--top N`, `--no-color` → `NO_COLOR=1`, …). It returns 1 for Bash-only flags (`--remote*`, `--self-check`, `--sort mtime`, `--file-size apparent`, `--max-depth`, `--top-files`, `--no-default-excludes`, `-h/--help`, `--bash`), unknown flags and values `parse_args` would reject; `try_go_binary` then returns and the Bash implementation runs. Remote mode sends `--bash` to the targets (`remote_build_args`) so they always produce the Bash summary and exit codes (0 ok, 2 partial) that `remote_run_all` expects.
 
 **NUL-delimited records everywhere.** All scan pipelines use `find -printf '…\0'`, `sort -z`, `head -z` to handle filenames with spaces, newlines, and special characters safely.
 
