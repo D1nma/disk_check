@@ -24,9 +24,20 @@ if [[ ! -t 0 && -t 1 ]]; then
   exec < /dev/tty 2>/dev/null || :
 fi
 
-VERSION="v2.2.0"
+# Les deux lignes suivantes sont réécrites par build.sh (valeurs par défaut :
+# script non assemblé → Bash seul) :
+#   VERSION    : version affichée — tag exact, sinon `git describe --tags`
+#                (<dernier-tag>-<n>-g<hash>), sinon le hash court.
+#   BINARY_TAG : release dont try_go_binary télécharge le binaire Go — tag
+#                exact, sinon dernier tag atteignable ; vide = Bash seul.
+VERSION="v2.2.0-3-g5dd945f"
+BINARY_TAG="v2.2.0"
 REPO_URL="https://github.com/D1nma/disk_check"
-CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${VERSION}"
+CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${BINARY_TAG}"
+
+# Arguments traduits pour le binaire Go (remplis par go_args_from_bash_args).
+declare -a GO_ARGS=()
+GO_NO_COLOR=0          # 1 si --no-color : exporter NO_COLOR=1 pour le binaire
 
 # ================== CONFIGURATION PAR DÉFAUT ==================
 readonly DEFAULT_REPORT_DIR="${HOME}/disk-reports"
@@ -107,6 +118,7 @@ REMOTE_PATH="/"              # répertoire scanné sur chaque cible
 REMOTE_REPORT_DIR="$(pwd)/remote-reports"  # dossier local pour les rapports
 REMOTE_TIMEOUT=10            # ConnectTimeout SSH en secondes
 declare -a REMOTE_SSH_OPTS=() # options SSH supplémentaires (--remote-ssh-opt)
+declare -a REMOTE_ARGS=()     # arguments du script distant (remote_build_args)
 
 # Chemin absolu du script courant ; vide si lancé via pipe (bash -s).
 # Utilisé par remote_run_host pour streamer le script sur SSH.
@@ -123,6 +135,14 @@ RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' DIM='' NC=''
 trap cleanup EXIT
 trap on_interrupt INT TERM
 
+# ---------------------------------------------------------------------------
+# try_go_binary ARGS...
+#   Bootstrap : remplace le processus par le binaire Go de la release
+#   BINARY_TAG (téléchargé et vérifié au premier lancement, puis en cache)
+#   quand chaque argument a un équivalent Go. Sinon retourne, et main()
+#   exécute l'implémentation Bash : pas de release (BINARY_TAG vide ou hors
+#   vX.Y…), option Bash seule, --bash, ou téléchargement impossible.
+# ---------------------------------------------------------------------------
 
 # === MODULE: utils ===
 # Utilitaires purs
@@ -2351,6 +2371,8 @@ navigate() {
 #
 # Options de scan propagées vers chaque cible :
 #   --mode, --sort, --top-count, --top-files, --max-depth
+#   (+ --bash : la cible exécute toujours l'implémentation Bash, voir
+#   remote_build_args)
 #
 # Options NON propagées :
 #   --exclude, --no-default-excludes  (chemins locaux sans sens à distance)
@@ -2402,6 +2424,33 @@ remote_validate_host() {
 }
 
 # ---------------------------------------------------------------------------
+# remote_build_args
+#   Remplit REMOTE_ARGS : arguments passés au script pipé sur chaque cible.
+#
+#   --bash en tête : sans lui, le script distant passerait par try_go_binary
+#   et pourrait exécuter le binaire Go de la cible (cache, réseau), dont la
+#   sortie et les codes de retour ne suivent pas le contrat lu par
+#   remote_run_all (rapport --summary Bash ; 0 = OK, 2 = scan partiel). Un
+#   binaire qui refuserait une option quitterait en 2, et un rapport vide
+#   serait compté « OK (partiel) ». Forcer le Bash rend le résultat identique
+#   sur toutes les cibles.
+# ---------------------------------------------------------------------------
+remote_build_args() {
+  REMOTE_ARGS=(
+    --bash
+    --path        "$REMOTE_PATH"
+    --summary
+    --no-color
+    --no-spinner
+    --mode        "$ANALYSIS_MODE"
+    --sort        "$SORT_MODE"
+    --top-count   "$TOP_COUNT"
+    --top-files   "$TOP_FILES_COUNT"
+    --max-depth   "$MAX_DEPTH"
+  )
+}
+
+# ---------------------------------------------------------------------------
 # remote_run_host HOST OUT_FILE ERR_FILE STATUS_FILE
 #   Streame le script courant via SSH sur HOST en mode --summary non interactif.
 #   Redirige stdout → OUT_FILE, stderr → ERR_FILE.
@@ -2432,22 +2481,11 @@ remote_run_host() {
   [[ -n "$port" ]] && ssh_opts+=(-p "$port")
   (( ${#REMOTE_SSH_OPTS[@]} > 0 )) && ssh_opts+=("${REMOTE_SSH_OPTS[@]}")
 
-  # Options de scan propagées vers la machine distante
-  local -a remote_args=(
-    --path        "$REMOTE_PATH"
-    --summary
-    --no-color
-    --no-spinner
-    --mode        "$ANALYSIS_MODE"
-    --sort        "$SORT_MODE"
-    --top-count   "$TOP_COUNT"
-    --top-files   "$TOP_FILES_COUNT"
-    --max-depth   "$MAX_DEPTH"
-  )
+  remote_build_args
 
   local remote_cmd="bash -s --"
   local arg
-  for arg in "${remote_args[@]}"; do
+  for arg in "${REMOTE_ARGS[@]}"; do
     remote_cmd+=" $(printf '%q' "$arg")"
   done
 
@@ -2599,39 +2637,159 @@ remote_run_all() {
 }
 
 try_go_binary() {
-    # Bypass if --bash flag is present
-    for arg in "$@"; do [[ "$arg" == "--bash" ]] && return; done
+  # Seuls les builds rattachés à une release publiée ont un binaire.
+  [[ "$BINARY_TAG" =~ ^v[0-9] ]] || return 0
 
-    local os arch binary
+  # Le binaire (package flag) quitte en code 2 sur toute option inconnue :
+  # ne l'exécuter qu'avec une traduction exacte des arguments du script.
+  go_args_from_bash_args "$@" || return 0
+
+  local binary="${CACHE_DIR}/disk-explorer"
+  if [[ ! -x "$binary" ]]; then
+    local os arch
     os=$(get_os)
     arch=$(get_arch)
-    binary="${CACHE_DIR}/disk-explorer"
-
-    # Only tagged releases use the Go binary (VERSION must start with v + digit).
-    # Untagged/dev builds run the Bash implementation, as the README documents.
-    [[ "$VERSION" =~ ^v[0-9] ]] || return
-
-    if [[ -x "$binary" ]]; then
-        exec "$binary" "$@"
+    if ! download_binary "$os" "$arch" "$binary" 2>&1 || [[ ! -x "$binary" ]]; then
+      printf "Info: téléchargement échoué, utilisation du mode bash\n" >&2
+      return 0
     fi
+  fi
 
-    if download_binary "$os" "$arch" "$binary" 2>&1; then
-        [[ -x "$binary" ]] && exec "$binary" "$@"
-    else
-        printf "Info: téléchargement échoué, utilisation du mode bash\n" >&2
+  if (( GO_NO_COLOR )); then
+    export NO_COLOR=1
+  fi
+  exec "$binary" "${GO_ARGS[@]}"
+}
+
+# ---------------------------------------------------------------------------
+# go_args_from_bash_args ARGS...
+#   Traduit les arguments du script vers la CLI du binaire Go. Remplit
+#   GO_ARGS et GO_NO_COLOR, sans autre effet de bord ; retourne 0 si chaque
+#   argument a un équivalent exact côté Go, 1 sinon (rester en Bash).
+#
+#   Traduits : --path DIR et PATH (→ positionnel final, après --), --mode,
+#              --exclude (relatif → préfixé par le chemin scanné, comme
+#              prepare_exclusions), --summary/--report/--tree (le dernier
+#              l'emporte, comme parse_args), --interactive (→ TUI, défaut Go),
+#              --tree-depth, --report-dir, --top-count N (→ --top N),
+#              --sort size et --file-size real (défauts Go → retirés),
+#              --no-color (→ GO_NO_COLOR=1), --no-spinner (retiré), --version.
+#   Bash seul : --remote*, --self-check, --sort mtime, --file-size apparent,
+#              --max-depth, --top-files, --no-default-excludes, --debug-tui,
+#              --bash, -h/--help (aide des options Bash), option inconnue,
+#              forme --opt=valeur (refusée par parse_args).
+#   Une valeur que parse_args refuserait renvoie aussi 1, pour que l'erreur
+#   affichée reste celle du script.
+# ---------------------------------------------------------------------------
+go_args_from_bash_args() {
+  GO_ARGS=()
+  GO_NO_COLOR=0
+
+  local run_mode="" mode="" top="" tree_depth="" report_dir=""
+  local path="" path_set=0 positional_used=0 want_version=0
+  local -a excludes=()
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --path|--mode|--exclude|--tree-depth|--top-count|--report-dir|--sort|--file-size)
+        # Valeur manquante : parse_args affichera l'erreur.
+        (( $# >= 2 )) || return 1
+        ;;&  # continue vers la branche propre à l'option
+      --path)
+        path="$2"; path_set=1; shift ;;
+      --mode)
+        [[ "$2" == partition || "$2" == global ]] || return 1
+        mode="$2"; shift ;;
+      --exclude)
+        # Globs refusés par prepare_exclusions ; vide = erreur côté Go.
+        [[ -n "$2" ]] && ! contains_glob_meta "$2" || return 1
+        excludes+=("$2"); shift ;;
+      --tree-depth)
+        _go_uint_le "$2" "$MAX_ALLOWED_DEPTH" || return 1
+        tree_depth="$2"; shift ;;
+      --top-count)
+        _go_uint_le "$2" "$MAX_ALLOWED_RESULTS" || return 1
+        top="$2"; shift ;;
+      --report-dir)
+        [[ -n "$2" ]] || return 1
+        report_dir="$2"; shift ;;
+      --sort)
+        [[ "$2" == size ]] || return 1       # le binaire trie par taille
+        shift ;;
+      --file-size)
+        [[ "$2" == real ]] || return 1       # le binaire mesure les blocs alloués
+        shift ;;
+      --summary|--report|--tree)
+        run_mode="$1" ;;
+      --interactive)
+        run_mode="" ;;
+      --no-color)
+        GO_NO_COLOR=1 ;;
+      --no-spinner)
+        ;;
+      --version)
+        want_version=1 ;;
+      --)
+        shift
+        while (( $# > 0 )); do
+          (( positional_used == 0 )) || return 1
+          path="$1"; path_set=1; positional_used=1
+          shift
+        done
+        break ;;
+      --remote|--remote-*|--self-check|--max-depth|--top-files|--no-default-excludes|--debug-tui|--bash|-h|--help)
+        return 1 ;;  # sans équivalent Go : implémentation Bash
+      -*)
+        return 1 ;;  # option inconnue : parse_args la refusera
+      *)
+        (( positional_used == 0 )) || return 1
+        path="$1"; path_set=1; positional_used=1 ;;
+    esac
+    shift
+  done
+
+  # Chemin vide : accepté par parse_args, refusé par prepare_current_dir.
+  if (( path_set )) && [[ -z "$path" ]]; then
+    return 1
+  fi
+
+  [[ -n "$mode" ]] && GO_ARGS+=(--mode "$mode")
+  local e
+  for e in "${excludes[@]}"; do
+    # Le binaire résout un chemin relatif depuis le répertoire courant,
+    # prepare_exclusions depuis le dossier scanné.
+    if [[ "$e" != /* ]] && (( path_set )); then
+      e="${path%/}/$e"
     fi
+    GO_ARGS+=(--exclude "$e")
+  done
+  [[ -n "$run_mode" ]] && GO_ARGS+=("$run_mode")
+  [[ -n "$tree_depth" ]] && GO_ARGS+=(--tree-depth "$tree_depth")
+  [[ -n "$top" ]] && GO_ARGS+=(--top "$top")
+  [[ -n "$report_dir" ]] && GO_ARGS+=(--report-dir "$report_dir")
+  (( want_version )) && GO_ARGS+=(--version)
+  # « -- » : le chemin est passé tel quel même s'il commence par « - ».
+  (( path_set )) && GO_ARGS+=(-- "$path")
+  return 0
+}
+
+# _go_uint_le VALUE MAX
+#   VALUE est un entier décimal canonique compris entre 0 et MAX. Les zéros de
+#   tête sont refusés : flag.Int (base 0) lirait « 010 » en octal.
+_go_uint_le() {
+  [[ "$1" =~ ^(0|[1-9][0-9]{0,8})$ ]] && (( $1 <= $2 ))
 }
 
 download_binary() {
     local os=$1 arch=$2 target=$3
     local name="disk-explorer-${os}-${arch}"
-    local url="${REPO_URL}/releases/download/${VERSION}/${name}"
-    local sums_url="${REPO_URL}/releases/download/${VERSION}/SHA256SUMS"
+    local url="${REPO_URL}/releases/download/${BINARY_TAG}/${name}"
+    local sums_url="${REPO_URL}/releases/download/${BINARY_TAG}/SHA256SUMS"
     local tmp="${target}.tmp"
 
     mkdir -p "$(dirname "$target")"
 
-    printf "Téléchargement de disk-explorer %s (%s/%s)...\n" "$VERSION" "$os" "$arch" >&2
+    printf "Téléchargement de disk-explorer %s (%s/%s)...\n" "$BINARY_TAG" "$os" "$arch" >&2
 
     if command -v curl >/dev/null 2>&1; then
         curl -#SLf "$url" -o "$tmp" 2>&1 || { rm -f "$tmp"; return 1; }
@@ -2856,6 +3014,7 @@ Options:
   --no-color                Désactive les couleurs
   --no-spinner              Désactive le spinner
   --bash                    Force l'utilisation de l'implémentation Bash
+  --version                 Affiche la version puis quitte
   -h, --help                Aide
 
 Mode Remote SSH (--remote) :
@@ -2871,6 +3030,11 @@ Mode Remote SSH (--remote) :
                             Exemples: -i ~/.ssh/id_ed25519  -p 2222
 
 Remarques:
+  - Construit depuis une release, le script exécute le binaire Go de cette
+    release (téléchargé et vérifié au premier lancement) quand toutes les
+    options ont un équivalent Go. --remote*, --self-check, --sort mtime,
+    --file-size apparent, --max-depth, --top-files, --no-default-excludes
+    et --bash gardent l'implémentation Bash.
   - Le mode PARTITION/CENTREON reste sur le même filesystem.
   - Le tri mtime des sous-dossiers repose sur la date du dossier lui-même,
     pas sur l'activité récursive de tout son contenu.
@@ -2988,6 +3152,11 @@ parse_args() {
         ;;
       --bash)
         # Ignoré ici, déjà traité par le shim try_go_binary
+        ;;
+      --version)
+        # Traduit tel quel pour le binaire Go ; même sortie en Bash.
+        printf 'disk-explorer %s\n' "$VERSION"
+        exit 0
         ;;
       --remote)
         RUN_MODE="remote"
