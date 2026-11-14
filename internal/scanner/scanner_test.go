@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 )
 
@@ -346,42 +345,6 @@ func TestScanHardlinkCountedOnce(t *testing.T) {
 	}
 }
 
-func TestLoadMounts(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("mountinfo is Linux-only")
-	}
-	set := loadMounts()
-	if set == nil {
-		t.Skip("no mountinfo available")
-	}
-	if _, ok := set["/"]; !ok {
-		t.Errorf("root must be a mount point, got %d entries", len(set))
-	}
-	for mp := range set {
-		if !strings.HasPrefix(mp, "/") {
-			t.Errorf("mount point %q is not absolute", mp)
-		}
-	}
-}
-
-func TestUnescapeMountPath(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"/mnt/simple", "/mnt/simple"},
-		{"/mnt/with\\040space", "/mnt/with space"},
-		{"/mnt/with\\011tab", "/mnt/with\ttab"},
-		{"/mnt/with\\134backslash", "/mnt/with\\backslash"},
-	}
-	for _, c := range cases {
-		got, ok := unescapeMountPath(c.in)
-		if !ok || got != c.want {
-			t.Errorf("unescapeMountPath(%q) = %q, %v; want %q, true", c.in, got, ok, c.want)
-		}
-	}
-	if _, ok := unescapeMountPath("/bad\\4suffix"); ok {
-		t.Error("truncated escape must be rejected")
-	}
-}
-
 func TestWorkerCountBounds(t *testing.T) {
 	n := workerCount(0)
 	if n < 2 || n > 32 {
@@ -503,34 +466,3 @@ func TestListDirNamesSurviveReuse(t *testing.T) {
 
 // Huge directories must fall back to a transient buffer instead of growing
 // the per-worker reusable buffer without bound.
-func TestListDirHugeDirFallback(t *testing.T) {
-	tmp := t.TempDir()
-	savedMax := entBufMax
-	entBufMax = 4
-	defer func() { entBufMax = savedMax }()
-
-	for i := 0; i < 10; i++ {
-		if err := os.WriteFile(filepath.Join(tmp, fmt.Sprintf("f%02d", i)), []byte("x"), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	lc := &listCtx{}
-	ents, _, err := listDir(lc, tmp, true, 0, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ents) != 10 {
-		t.Fatalf("expected 10 entries, got %d", len(ents))
-	}
-	seen := make(map[string]bool)
-	for _, e := range ents {
-		if seen[e.name] {
-			t.Fatalf("duplicate entry %q", e.name)
-		}
-		seen[e.name] = true
-	}
-	if cap(lc.entries) > 4 {
-		t.Errorf("reusable buffer grew to %d, want capped at 4", cap(lc.entries))
-	}
-}

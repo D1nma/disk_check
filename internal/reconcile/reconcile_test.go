@@ -103,7 +103,7 @@ func TestLinesCoversExt4(t *testing.T) {
 		"8.0 GiB  inexpliqué : métadonnées/journal du FS, fichiers masqués sous un point de montage",
 		"mount --bind / /mnt",
 		"3 dossiers illisibles",
-		"2 processus non inspectés (" + hiddenHint() + ")",
+		"2 processus non inspectés ("+hiddenHint()+")",
 		"Réservé root : 5.0 GiB (5 % — invisible pour les utilisateurs non root ; ajustable : tune2fs -m)",
 	)
 	mustNotContain(t, out, "snapshots", "Inodes", "non calculable")
