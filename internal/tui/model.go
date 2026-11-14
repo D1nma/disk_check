@@ -77,8 +77,6 @@ type rescanMsg struct {
 	progress scanner.ScanProgress
 }
 
-
-
 type updateState int
 
 const (
@@ -189,9 +187,9 @@ type Model struct {
 	pinned      map[*scanner.Node]int64
 	recent      map[*scanner.Node]int64
 	recentSince int64
-	devBytes   map[uint64]int64
-	scanErrs   []scanner.ScanError
-	errorCount int
+	devBytes    map[uint64]int64
+	scanErrs    []scanner.ScanError
+	errorCount  int
 
 	// disk usage header (filesystem holding the current directory)
 	diskPath  string

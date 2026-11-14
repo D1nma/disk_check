@@ -67,7 +67,7 @@ func (m Model) markTotals() (total, free int64) {
 }
 
 // shellQuote quotes s for POSIX sh. Single quotes keep every byte literal,
-// including newlines; an embedded quote becomes '\''.
+// including newlines; an embedded quote becomes '\”.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

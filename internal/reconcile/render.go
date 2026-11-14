@@ -3,6 +3,7 @@ package reconcile
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"unicode/utf8"
 
@@ -69,9 +70,9 @@ func Lines(r Report, top int) []string {
 		out = append(out, fmt.Sprintf("  %d dossiers illisibles : leur taille manque au scan → relancer avec sudo", r.Unreadable))
 	}
 	if r.Hidden == 1 {
-		out = append(out, "  1 processus non inspecté (relancez en root pour une liste complète)")
+		out = append(out, "  1 processus non inspecté ("+hiddenHint()+")")
 	} else if r.Hidden > 1 {
-		out = append(out, fmt.Sprintf("  %d processus non inspectés (relancez en root pour une liste complète)", r.Hidden))
+		out = append(out, fmt.Sprintf("  %d processus non inspectés (%s)", r.Hidden, hiddenHint()))
 	}
 	if l, ok := inodeLine(fs); ok {
 		out = append(out, l)
@@ -309,4 +310,13 @@ func padLeft(s string, width int) string {
 		return strings.Repeat(" ", width-n) + s
 	}
 	return s
+}
+
+// hiddenHint explains why processes could not be inspected: missing
+// privileges, or (already root) another namespace / kernel restrictions.
+func hiddenHint() string {
+	if os.Geteuid() == 0 {
+		return "autre espace de noms ou restrictions du noyau"
+	}
+	return "relancez en root pour une liste complète"
 }

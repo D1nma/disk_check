@@ -13,7 +13,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/D1nma/disk_check/internal/annotate"
 	"github.com/D1nma/disk_check/internal/display"
+	"github.com/D1nma/disk_check/internal/reconcile"
 	"github.com/D1nma/disk_check/internal/scanner"
 	"github.com/D1nma/disk_check/internal/snapshot"
 	"github.com/D1nma/disk_check/internal/tui"
@@ -40,6 +42,7 @@ type config struct {
 	doReport    bool
 	doTree      bool
 	doJSON      bool
+	doWhy       bool
 	doUpdate    bool
 	showVersion bool
 	treeDepth   int
@@ -77,6 +80,7 @@ func parseArgs(args []string, stderr io.Writer) (*config, error) {
 	fs.BoolVar(&cfg.doReport, "report", false, "Écrit le résumé dans un fichier et quitte")
 	fs.BoolVar(&cfg.doTree, "tree", false, "Affiche l'arborescence et quitte")
 	fs.BoolVar(&cfg.doJSON, "json", false, "Résumé au format JSON sur la sortie standard")
+	fs.BoolVar(&cfg.doWhy, "why", false, "Explique l'écart entre df et le contenu réel du système de fichiers de PATH, puis quitte")
 	fs.IntVar(&cfg.treeDepth, "tree-depth", 3, "Profondeur max pour --tree")
 	fs.IntVar(&cfg.topN, "top", 20, "Nombre d'entrées dans --summary/--report/--json")
 	fs.StringVar(&cfg.reportDir, "report-dir", ".", "Dossier de sortie pour --report")
@@ -133,6 +137,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	switch {
+	case cfg.doWhy:
+		return runWhy(stdout, stderr, cfg, opts)
 	case cfg.doSummary || cfg.doJSON:
 		return runSummary(stdout, stderr, cfg, opts)
 	case cfg.doReport:
@@ -259,6 +265,7 @@ func summaryData(res scanner.ScanProgress, h history, cfg *config) display.Summa
 		Errors:     res.Errors,
 		Recent:     res.Recent[res.Root],
 		Pinned:     res.Pinned,
+		Annotate:   summaryAnnotator(),
 	}
 	if cfg.topN > len(res.TopFiles) {
 		d.TopFiles = scanner.TopFiles(res.Root, cfg.topN)
@@ -268,6 +275,21 @@ func summaryData(res scanner.ScanProgress, h history, cfg *config) display.Summa
 		d.Growth = h.prev.TopGrowth(res.Root, cfg.topN)
 	}
 	return d
+}
+
+func summaryAnnotator() func(string, bool) (string, bool) {
+	ann := annotate.New(annotate.Options{})
+	return func(path string, isDir bool) (string, bool) {
+		a, ok := ann.Lookup(path, isDir)
+		if !ok {
+			return "", false
+		}
+		label := a.Label
+		if a.Cleanup != "" {
+			label += " → " + a.Cleanup
+		}
+		return label, true
+	}
 }
 
 func exitFor(res scanner.ScanProgress) int {
@@ -346,6 +368,32 @@ func runTree(stdout, stderr io.Writer, cfg *config, opts scanner.ScanOptions) in
 	return exitFor(res)
 }
 
+// runWhy scans the whole filesystem holding PATH (from its mount point,
+// staying on that device) and explains the gap with what df reports.
+func runWhy(stdout, stderr io.Writer, cfg *config, opts scanner.ScanOptions) int {
+	fs, err := reconcile.Stat(cfg.path)
+	if err != nil {
+		fmt.Fprintf(stderr, "Erreur : %s : %v\n", cfg.path, err)
+		return exitFatal
+	}
+	opts.SameDevice = true
+	var res scanner.ScanProgress
+	for p := range scanner.Scan(context.Background(), fs.MountPoint, opts) {
+		res = p
+	}
+	if res.Err != nil || res.Root == nil {
+		fmt.Fprintf(stderr, "Erreur : %v\n", res.Err)
+		return exitFatal
+	}
+	r, err := explainGap(cfg.path, fs.MountPoint, true, res.DevBytes, res.ErrorCount)
+	if err != nil {
+		fmt.Fprintf(stderr, "Erreur : %v\n", err)
+		return exitFatal
+	}
+	reconcile.Render(stdout, r, 20)
+	return exitFor(res)
+}
+
 func runTUI(stderr io.Writer, cfg *config, opts scanner.ScanOptions) int {
 	abs, err := filepath.Abs(cfg.path)
 	if err != nil {
@@ -379,6 +427,7 @@ func runTUI(stderr io.Writer, cfg *config, opts scanner.ScanOptions) int {
 		CancelScan:  cancel,
 		ScanOpts:    opts,
 		ReadOnly:    cfg.readOnly,
+		Hooks:       localHooks(),
 		Prev:        h.prev,
 		SaveSnapshot: func(res scanner.ScanProgress) {
 			h.save(res, io.Discard)

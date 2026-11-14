@@ -35,6 +35,20 @@ type SummaryData struct {
 	Since  time.Time
 
 	Now time.Time // report time; zero means time.Now()
+
+	// Annotate optionally describes a path (docker container, cache with
+	// its cleanup command). The text is sanitized before printing.
+	Annotate func(absPath string, isDir bool) (string, bool)
+}
+
+func (d SummaryData) note(n *scanner.Node) string {
+	if d.Annotate == nil {
+		return ""
+	}
+	if s, ok := d.Annotate(n.Path(), n.IsDir); ok && s != "" {
+		return "  · " + textsafe.Clean(s)
+	}
+	return ""
 }
 
 // maxListedErrors is how many unreadable paths a summary lists.
@@ -128,7 +142,7 @@ func Summary(w io.Writer, d SummaryData) {
 		if i >= d.TopN {
 			break
 		}
-		fmt.Fprintf(w, "  %10s  %s/%s\n", FormatSize(e.Size), textsafe.Clean(e.Name), incompleteMark(e))
+		fmt.Fprintf(w, "  %10s  %s/%s%s\n", FormatSize(e.Size), textsafe.Clean(e.Name), incompleteMark(e), d.note(e))
 	}
 	if len(entries) == 0 {
 		fmt.Fprintln(w, "  (aucun)")
@@ -144,7 +158,7 @@ func Summary(w io.Writer, d SummaryData) {
 		if f.Flags&scanner.FlagHardlink != 0 {
 			shared = "  (lien dur)"
 		}
-		fmt.Fprintf(w, "  %10s  %s%s\n", FormatSize(f.Size), textsafe.Clean(relPath(root, f)), shared)
+		fmt.Fprintf(w, "  %10s  %s%s%s\n", FormatSize(f.Size), textsafe.Clean(relPath(root, f)), shared, d.note(f))
 	}
 	if len(d.TopFiles) == 0 {
 		fmt.Fprintln(w, "  (aucun)")
