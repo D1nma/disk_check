@@ -133,6 +133,10 @@ func (p *ncduReader) read() (*scanner.Node, Meta, error) {
 		Progname  string `json:"progname"`
 		Progver   string `json:"progver"`
 		Timestamp any    `json:"timestamp"`
+		Host      string `json:"de_host"`
+		FSTotal   any    `json:"de_fs_total"`
+		FSUsed    any    `json:"de_fs_used"`
+		FSAvail   any    `json:"de_fs_avail"`
 	}
 	// The metadata is informative: a field of an unexpected type is ignored.
 	if err := p.dec.Decode(&rm); err != nil {
@@ -141,9 +145,14 @@ func (p *ncduReader) read() (*scanner.Node, Meta, error) {
 			return nil, meta, p.fail(err)
 		}
 	}
-	meta.Progname, meta.Progver = rm.Progname, rm.Progver
-	if n, ok := rm.Timestamp.(json.Number); ok {
-		meta.Timestamp, _ = numberToInt(n)
+	meta.Progname, meta.Progver, meta.Host = rm.Progname, rm.Progver, rm.Host
+	for _, f := range []struct {
+		v   any
+		dst *int64
+	}{{rm.Timestamp, &meta.Timestamp}, {rm.FSTotal, &meta.FSTotal}, {rm.FSUsed, &meta.FSUsed}, {rm.FSAvail, &meta.FSAvail}} {
+		if n, ok := f.v.(json.Number); ok {
+			*f.dst, _ = numberToInt(n)
+		}
 	}
 
 	if err := p.need("répertoire racine"); err != nil {

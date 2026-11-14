@@ -147,44 +147,53 @@ func parseVersion(s string) (version, bool) {
 // executable so Install can swap it in with an atomic rename. It does not
 // touch the running binary.
 func Prefetch(tag string) (string, error) {
-	if !releaseTag.MatchString(tag) {
-		return "", fmt.Errorf("invalid release tag %q", tag)
-	}
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Dir(exe)
-	name := fmt.Sprintf("disk-explorer-%s-%s", runtime.GOOS, runtime.GOARCH)
-	binURL := fmt.Sprintf("%s/releases/download/%s/%s", repoURL, tag, name)
-	sumsURL := fmt.Sprintf("%s/releases/download/%s/SHA256SUMS", repoURL, tag)
-
-	tmpFile, err := os.CreateTemp(dir, "disk-explorer-*.tmp")
+	tmpFile, err := os.CreateTemp(filepath.Dir(exe), "disk-explorer-*.tmp")
 	if err != nil {
 		return "", err
 	}
 	tmp := tmpFile.Name()
 	tmpFile.Close()
-
-	if err := downloadFile(binURL, tmp); err != nil {
-		os.Remove(tmp)
-		return "", fmt.Errorf("download: %w", err)
-	}
-
-	sums, err := fetchText(sumsURL)
-	if err != nil {
-		os.Remove(tmp)
-		return "", fmt.Errorf("checksum list unavailable: %w", err)
-	}
-	if err := verifyChecksum(tmp, name, sums); err != nil {
-		os.Remove(tmp)
-		return "", fmt.Errorf("checksum: %w", err)
-	}
-	if err := os.Chmod(tmp, 0755); err != nil {
+	if err := FetchBinary(tag, runtime.GOOS, runtime.GOARCH, tmp); err != nil {
 		os.Remove(tmp)
 		return "", err
 	}
 	return tmp, nil
+}
+
+// FetchBinary downloads the release binary of tag for goos/goarch into
+// dest (overwritten), verifies it against the release SHA256SUMS and makes
+// it executable. dest is removed on failure. Used for self-updates and to
+// push the right binary to a remote host of another architecture.
+func FetchBinary(tag, goos, goarch, dest string) error {
+	if !releaseTag.MatchString(tag) {
+		return fmt.Errorf("invalid release tag %q", tag)
+	}
+	name := fmt.Sprintf("disk-explorer-%s-%s", goos, goarch)
+	binURL := fmt.Sprintf("%s/releases/download/%s/%s", repoURL, tag, name)
+	sumsURL := fmt.Sprintf("%s/releases/download/%s/SHA256SUMS", repoURL, tag)
+
+	if err := downloadFile(binURL, dest); err != nil {
+		os.Remove(dest)
+		return fmt.Errorf("download: %w", err)
+	}
+	sums, err := fetchText(sumsURL)
+	if err != nil {
+		os.Remove(dest)
+		return fmt.Errorf("checksum list unavailable: %w", err)
+	}
+	if err := verifyChecksum(dest, name, sums); err != nil {
+		os.Remove(dest)
+		return fmt.Errorf("checksum: %w", err)
+	}
+	if err := os.Chmod(dest, 0755); err != nil {
+		os.Remove(dest)
+		return err
+	}
+	return nil
 }
 
 // Install atomically replaces the running executable with the prefetched,

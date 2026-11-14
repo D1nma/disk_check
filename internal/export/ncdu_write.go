@@ -16,6 +16,12 @@ type Meta struct {
 	Progname  string // "disk-explorer" when we write
 	Progver   string
 	Timestamp int64 // unix seconds
+
+	// disk-explorer extensions (optional, ignored by ncdu): the host that
+	// was scanned and the usage of the filesystem holding the scan root, so
+	// a remote scan can still show "% of disk".
+	Host                     string
+	FSTotal, FSUsed, FSAvail int64
 }
 
 // Format version written by WriteNcdu.
@@ -64,6 +70,18 @@ func WriteNcdu(w io.Writer, root *scanner.Node, meta Meta) error {
 	}
 	b = append(b, `,"timestamp":`...)
 	b = strconv.AppendInt(b, meta.Timestamp, 10)
+	if meta.Host != "" {
+		b = append(b, `,"de_host":`...)
+		b = appendJSONString(b, meta.Host)
+	}
+	if meta.FSTotal > 0 {
+		b = append(b, `,"de_fs_total":`...)
+		b = strconv.AppendInt(b, meta.FSTotal, 10)
+		b = append(b, `,"de_fs_used":`...)
+		b = strconv.AppendInt(b, meta.FSUsed, 10)
+		b = append(b, `,"de_fs_avail":`...)
+		b = strconv.AppendInt(b, meta.FSAvail, 10)
+	}
 	b = append(b, "},\n"...)
 	if root.IsDir {
 		b = append(b, '[')

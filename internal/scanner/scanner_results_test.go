@@ -210,3 +210,21 @@ func TestExpectedEntriesOnlyAtMountPoints(t *testing.T) {
 		t.Fatalf("non mount point must give 0, got %d", got)
 	}
 }
+
+func TestAnalyzeImportedTree(t *testing.T) {
+	root := &Node{Name: "/r", IsDir: true}
+	bad := &Node{Name: "bad", IsDir: true, Parent: root, Flags: FlagUnreadable}
+	newF := &Node{Name: "new", Size: 300, ModTime: 2000, Parent: root}
+	oldF := &Node{Name: "old", Size: 500, ModTime: 10, Parent: root}
+	root.Children = []*Node{bad, newF, oldF}
+	a := Analyze(root, 1000, 1)
+	if len(a.TopFiles) != 1 || a.TopFiles[0] != oldF {
+		t.Errorf("top files = %v", a.TopFiles)
+	}
+	if a.Recent[root] != 300 || a.ErrorCount != 1 || a.Errors[0].Path != "/r/bad" {
+		t.Errorf("analysis = %+v", a)
+	}
+	if root.Size != 0 {
+		t.Error("Analyze must not touch sizes")
+	}
+}

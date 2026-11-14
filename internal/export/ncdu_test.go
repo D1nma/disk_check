@@ -634,3 +634,19 @@ func TestNcduRoundTripRealScan(t *testing.T) {
 	}
 	compareTrees(t, want, got, noHardlinkBit)
 }
+
+func TestMetaExtensionsRoundTrip(t *testing.T) {
+	root := &scanner.Node{Name: "/srv", IsDir: true}
+	var buf bytes.Buffer
+	in := Meta{Progver: "v9", Timestamp: 1700000000, Host: "web1", FSTotal: 1000, FSUsed: 600, FSAvail: 350}
+	if err := WriteNcdu(&buf, root, in); err != nil {
+		t.Fatal(err)
+	}
+	_, out, err := ReadNcdu(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Host != "web1" || out.FSTotal != 1000 || out.FSUsed != 600 || out.FSAvail != 350 || out.Timestamp != 1700000000 {
+		t.Fatalf("meta not preserved: %+v", out)
+	}
+}
