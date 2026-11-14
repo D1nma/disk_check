@@ -82,3 +82,27 @@ func TestTreeKeepsChildOrder(t *testing.T) {
 		t.Error("sanity: output should contain file.bin")
 	}
 }
+
+func TestTreeGlyphsAndSanitize(t *testing.T) {
+	root := buildTestTree()
+	evil := &scanner.Node{Name: "a\nb\x1b[31m", Size: 1, Parent: root}
+	root.Children = append(root.Children, evil)
+	root.Children[0].Flags = scanner.FlagUnreadable // inner
+	var buf bytes.Buffer
+	Tree(&buf, root, 3)
+	out := buf.String()
+	if strings.ContainsRune(out, 0x1b) {
+		t.Fatalf("escape leaked: %q", out)
+	}
+	want := []string{
+		"├── file.bin",
+		"├── inner/  ⚠ illisible",
+		"│   └── data",
+		`└── a\nb?[31m`,
+	}
+	for _, w := range want {
+		if !strings.Contains(out, w) {
+			t.Errorf("missing %q in:\n%s", w, out)
+		}
+	}
+}

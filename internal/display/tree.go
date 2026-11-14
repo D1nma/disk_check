@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/D1nma/disk_check/internal/scanner"
+	"github.com/D1nma/disk_check/internal/textsafe"
 )
 
 // displaySize returns the tree-view size of a node: the subtree's file
@@ -61,18 +62,18 @@ func appendScaled(dst []byte, f float64, unit string) []byte {
 func Tree(w io.Writer, node *scanner.Node, maxDepth int) {
 	bw := bufio.NewWriter(w)
 	defer bw.Flush()
-	fmt.Fprintf(bw, "TREE SIZE VIEW (depth=%d) - %s\n\n", maxDepth, node.Path())
+	fmt.Fprintf(bw, "TREE SIZE VIEW (depth=%d) - %s\n\n", maxDepth, textsafe.Clean(node.Path()))
 	tc := &treeCtx{bw: bw}
-	printNode(tc, node, displaySize(node), nil, 0, true, maxDepth)
+	printNode(tc, node, displaySize(node), nil, 0, true, false, maxDepth)
 }
 
 // printNode renders one node then, if depth allows, its children.
-// pad is the indentation bytes for this level ("  "*(depth-1)), prefix the
-// bytes printed before the name ("├── " branch of the pad, or none at root).
-func printNode(tc *treeCtx, node *scanner.Node, rootSize int64, pad []byte, depth int, isRoot bool, maxDepth int) {
+// prefix holds the continuation columns of the ancestors ("│   " or "    "
+// per level below the root); isLast selects "└── " instead of "├── ".
+func printNode(tc *treeCtx, node *scanner.Node, rootSize int64, prefix []byte, depth int, isRoot, isLast bool, maxDepth int) {
 	size := displaySize(node)
 
-	name := node.Name
+	name := textsafe.Clean(node.Name)
 	if isRoot {
 		name = "."
 	}
@@ -102,10 +103,20 @@ func printNode(tc *treeCtx, node *scanner.Node, rootSize int64, pad []byte, dept
 	line = append(line, '%', ' ', ' ')
 
 	if depth > 0 {
-		line = append(line, pad...)
-		line = append(line, "├── "...)
+		line = append(line, prefix...)
+		if isLast {
+			line = append(line, "└── "...)
+		} else {
+			line = append(line, "├── "...)
+		}
 	}
 	line = append(line, name...)
+	switch {
+	case node.Flags&scanner.FlagUnreadable != 0:
+		line = append(line, "  ⚠ illisible"...)
+	case node.Flags&scanner.FlagPartial != 0:
+		line = append(line, "  ⚠ incomplet"...)
+	}
 	line = append(line, '\n')
 	tc.bw.Write(line)
 	tc.line = line
@@ -117,19 +128,23 @@ func printNode(tc *treeCtx, node *scanner.Node, rootSize int64, pad []byte, dept
 		return
 	}
 
-	// Children of this level all share the same pad and are printed
-	// biggest-first. Copy to avoid reordering the shared tree.
-	// Child pad = "  "*(childDepth-1); root's children have no leading pad.
-	var childPad []byte
+	// Children are printed biggest-first. Copy to avoid reordering the
+	// shared tree. The root's children have no continuation prefix.
+	var childPrefix []byte
 	if depth > 0 {
-		childPad = append(append(make([]byte, 0, len(pad)+2), pad...), ' ', ' ')
+		childPrefix = append(make([]byte, 0, len(prefix)+6), prefix...)
+		if isLast {
+			childPrefix = append(childPrefix, "    "...)
+		} else {
+			childPrefix = append(childPrefix, "│   "...)
+		}
 	}
 	kids := make([]*scanner.Node, len(node.Children))
 	copy(kids, node.Children)
-	sort.Slice(kids, func(i, j int) bool {
+	sort.SliceStable(kids, func(i, j int) bool {
 		return displaySize(kids[i]) > displaySize(kids[j])
 	})
-	for _, child := range kids {
-		printNode(tc, child, rootSize, childPad, depth+1, false, maxDepth)
+	for i, child := range kids {
+		printNode(tc, child, rootSize, childPrefix, depth+1, false, i == len(kids)-1, maxDepth)
 	}
 }
