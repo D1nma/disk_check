@@ -1,1 +1,0 @@
-cat test_args.sh | bash -c "$(cat)" bash /etc

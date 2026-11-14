@@ -30,6 +30,30 @@ type Node struct {
 	FileCount int32
 	DirCount  int32
 	IsDir     bool
+	Flags     uint8 // Flag* bits; fits in the padding after IsDir (no size cost)
+}
+
+// Node flags.
+const (
+	// FlagUnreadable: the directory (or some of its entries) could not be
+	// read. Its Size is a lower bound.
+	FlagUnreadable uint8 = 1 << iota
+	// FlagHardlink: the file's inode has more than one link. Only one link
+	// (the lexicographically smallest path seen) carries the size; the
+	// others have Size 0.
+	FlagHardlink
+	// FlagMountRoot: the directory is the root of a filesystem other than
+	// its parent's.
+	FlagMountRoot
+	// FlagPartial: some descendant directory is unreadable, so Size is a
+	// lower bound. Set by the post-scan aggregation.
+	FlagPartial
+)
+
+// Incomplete reports whether n's size may be underestimated because n or
+// one of its descendants could not be read.
+func (n *Node) Incomplete() bool {
+	return n.Flags&(FlagUnreadable|FlagPartial) != 0
 }
 
 func (n *Node) Path() string {
