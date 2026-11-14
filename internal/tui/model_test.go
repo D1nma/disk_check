@@ -118,9 +118,7 @@ func TestModelNavigation(t *testing.T) {
 	newModel, cmd := m.Update(msg)
 	m = newModel.(Model)
 
-	if cmd != nil {
-		t.Error("Expected nil command for instant navigation")
-	}
+	assertOnlyDiskRefresh(t, cmd)
 	if m.Current != child {
 		t.Errorf("Expected current node to be child, got %s", m.Current.Path())
 	}
@@ -132,9 +130,7 @@ func TestModelNavigation(t *testing.T) {
 	newModel, cmd = m.Update(msg)
 	m = newModel.(Model)
 
-	if cmd != nil {
-		t.Error("Expected nil command for instant navigation")
-	}
+	assertOnlyDiskRefresh(t, cmd)
 	if m.Current != root {
 		t.Errorf("Expected current node to be root, got %s", m.Current.Path())
 	}
@@ -160,10 +156,10 @@ func TestViewHereLineOmitsParentAtRoot(t *testing.T) {
 	if !strings.Contains(v, "/data") {
 		t.Errorf("missing current path in view:\n%s", v)
 	}
-	if strings.Contains(v, "of parent") {
+	if strings.Contains(v, "du parent") {
 		t.Errorf("root should omit parent percent:\n%s", v)
 	}
-	if !strings.Contains(v, "of disk") {
+	if !strings.Contains(v, "du disque") {
 		t.Errorf("missing disk percent:\n%s", v)
 	}
 }
@@ -182,7 +178,7 @@ func TestViewHereLineIncludesParentWhenNested(t *testing.T) {
 		Height:    24,
 	}
 	v := m.View()
-	if !strings.Contains(v, "of parent") {
+	if !strings.Contains(v, "du parent") {
 		t.Errorf("nested dir should show parent percent:\n%s", v)
 	}
 }
@@ -243,5 +239,17 @@ func TestUpdatePromptStateMachine(t *testing.T) {
 	m7, _ = m7.Update(updatePrefetchedMsg{tag: "v8.8.8", err: context.DeadlineExceeded})
 	if m7.(Model).updateState != updateFailed || m7.(Model).updateErr == "" {
 		t.Fatalf("state after failed prefetch = %+v", m7.(Model))
+	}
+}
+
+// assertOnlyDiskRefresh checks that navigation does no disk I/O besides one
+// statfs for the header (no rescan).
+func assertOnlyDiskRefresh(t *testing.T, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		return
+	}
+	if _, ok := cmd().(diskInfoMsg); !ok {
+		t.Error("navigation must only refresh the disk header")
 	}
 }
