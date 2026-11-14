@@ -432,7 +432,8 @@ func TestListDir(t *testing.T) {
 	}
 
 	lc := &listCtx{}
-	ents, dirSize, _, subdirs, err := listDir(lc, tmp, true, 0, true)
+	ents, info, err := listDir(lc, tmp, true, 0, true)
+	dirSize, subdirs := info.size, info.subdirs
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,13 +481,13 @@ func TestListDirNamesSurviveReuse(t *testing.T) {
 	}
 
 	lc := &listCtx{}
-	entsA, _, _, _, err := listDir(lc, dirA, true, 0, true)
+	entsA, _, err := listDir(lc, dirA, true, 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	first := make([]walkEntry, len(entsA))
 	copy(first, entsA)
-	entsB, _, _, _, err := listDir(lc, dirB, true, 0, true)
+	entsB, _, err := listDir(lc, dirB, true, 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +516,7 @@ func TestListDirHugeDirFallback(t *testing.T) {
 	}
 
 	lc := &listCtx{}
-	ents, _, _, _, err := listDir(lc, tmp, true, 0, true)
+	ents, _, err := listDir(lc, tmp, true, 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}

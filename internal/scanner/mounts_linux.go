@@ -8,16 +8,23 @@ import (
 	"strings"
 )
 
-// loadMounts returns the set of absolute mount-point paths from
-// /proc/self/mountinfo, or nil when unavailable (callers then degrade to
-// statfs per directory). Field 5 of each line is the mount point, with
-// octal escapes (\040 space, \011 tab, \012 newline, \134 backslash).
-func loadMounts() map[string]struct{} {
-	data, err := os.ReadFile("/proc/self/mountinfo")
+// mountEntry is one line of /proc/self/mountinfo.
+type mountEntry struct {
+	path   string // mount point, unescaped, no trailing slash (except "/")
+	fsType string // filesystem type after the " - " separator
+}
+
+var mountinfoPath = "/proc/self/mountinfo"
+
+// loadMountTable parses mountinfo. Field 5 of each line is the mount point,
+// with octal escapes (\040 space, \011 tab, \012 newline, \134 backslash);
+// the first field after the " - " separator is the filesystem type.
+func loadMountTable() []mountEntry {
+	data, err := os.ReadFile(mountinfoPath)
 	if err != nil {
 		return nil
 	}
-	set := make(map[string]struct{})
+	var table []mountEntry
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Split(line, " ")
 		if len(fields) < 5 {
@@ -30,10 +37,28 @@ func loadMounts() map[string]struct{} {
 		if mp != "/" {
 			mp = strings.TrimSuffix(mp, "/")
 		}
-		set[mp] = struct{}{}
+		fsType := ""
+		for i := 5; i+1 < len(fields); i++ {
+			if fields[i] == "-" {
+				fsType = fields[i+1]
+				break
+			}
+		}
+		table = append(table, mountEntry{path: mp, fsType: fsType})
 	}
-	if len(set) == 0 {
+	return table
+}
+
+// loadMounts returns the set of absolute mount-point paths, or nil when
+// mountinfo is unavailable (callers then degrade to statfs per directory).
+func loadMounts() map[string]struct{} {
+	table := loadMountTable()
+	if len(table) == 0 {
 		return nil
+	}
+	set := make(map[string]struct{}, len(table))
+	for _, m := range table {
+		set[m.path] = struct{}{}
 	}
 	return set
 }

@@ -47,32 +47,34 @@ func (lc *listCtx) slabString(name []byte) string {
 	return unsafe.String(&lc.slab[start], len(name))
 }
 
-func listDir(lc *listCtx, path string, wantStat bool, fsHint int64, allowKern bool) (entries []walkEntry, dirSize int64, fsType int64, subdirs int, err error) {
+func listDir(lc *listCtx, path string, wantStat bool, fsHint int64, allowKern bool) ([]walkEntry, dirInfo, error) {
+	var info dirInfo
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, 0, 0, 0, err
+		return nil, info, err
 	}
 	defer unix.Close(fd)
 
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
-		return nil, 0, 0, 0, err
+		return nil, info, err
 	}
-	dirSize = st.Blocks * 512
+	info.size = int64(st.Blocks) * 512
+	info.dev = uint64(st.Dev)
 	if wantStat {
 		var stfs unix.Statfs_t
 		if err := unix.Fstatfs(fd, &stfs); err != nil {
-			return nil, dirSize, 0, 0, err
+			return nil, info, err
 		}
-		fsType = int64(stfs.Type)
+		info.fsType = int64(stfs.Type)
 	} else {
-		fsType = fsHint
+		info.fsType = fsHint
 	}
 	// Pseudo-filesystems (proc, sysfs, ...) are dropped by the caller anyway;
 	// skip their entries instead of stat-ing them first (the root scan of a
 	// pseudo-filesystem itself still lists entries).
-	if !allowKern && fsType != 0 && isKernFS(fsType) {
-		return nil, dirSize, fsType, 0, nil
+	if !allowKern && info.fsType != 0 && isKernFS(info.fsType) {
+		return nil, info, nil
 	}
 
 	if lc.dirent == nil {
@@ -83,7 +85,7 @@ func listDir(lc *listCtx, path string, wantStat bool, fsHint int64, allowKern bo
 	for {
 		n, err := unix.Getdents(fd, lc.dirent)
 		if err != nil {
-			return nil, dirSize, fsType, subdirs, err
+			return nil, info, err
 		}
 		if n == 0 {
 			break
@@ -113,16 +115,25 @@ func listDir(lc *listCtx, path string, wantStat bool, fsHint int64, allowKern bo
 
 			var cst unix.Stat_t
 			if err := fstatatRaw(fd, rec[direntNameOff:], &cst, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+				// A vanished entry is a normal race; anything else (EACCES on
+				// a readable but non-searchable directory, EIO) means the
+				// directory's size is underestimated.
+				if err != unix.ENOENT {
+					info.statErrs++
+					if info.statErr == nil {
+						info.statErr = err
+					}
+				}
 				continue
 			}
 
 			isDir := cst.Mode&unix.S_IFMT == unix.S_IFDIR
 			if isDir {
-				subdirs++
+				info.subdirs++
 			}
 			sz := int64(0)
 			if !isDir {
-				sz = cst.Blocks * 512
+				sz = int64(cst.Blocks) * 512
 			}
 			e := walkEntry{
 				name:    lc.slabString(name),
@@ -146,8 +157,8 @@ func listDir(lc *listCtx, path string, wantStat bool, fsHint int64, allowKern bo
 	}
 	if overflow {
 		lc.entries = lc.entries[:0]
-		return ents, dirSize, fsType, subdirs, nil
+		return ents, info, nil
 	}
 	lc.entries = ents // len kept for reuse; entries point into lc.entries' array
-	return ents, dirSize, fsType, subdirs, nil
+	return ents, info, nil
 }
