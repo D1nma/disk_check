@@ -30,8 +30,8 @@ fi
 #                (<dernier-tag>-<n>-g<hash>), sinon le hash court.
 #   BINARY_TAG : release dont try_go_binary télécharge le binaire Go — tag
 #                exact, sinon dernier tag atteignable ; vide = Bash seul.
-VERSION="v2.2.0-3-g5dd945f"
-BINARY_TAG="v2.2.0"
+VERSION="v2.3.0"
+BINARY_TAG="v2.3.0"
 REPO_URL="https://github.com/D1nma/disk_check"
 CACHE_DIR="${HOME}/.cache/disk-explorer/bin/${BINARY_TAG}"
 
