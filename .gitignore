@@ -8,3 +8,6 @@ graphify-out/
 
 # release binaries are built by CI into dist/
 dist/
+
+# agent worktrees (local tooling)
+.claude/worktrees/

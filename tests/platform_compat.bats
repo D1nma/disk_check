@@ -1,7 +1,13 @@
 #!/usr/bin/env bats
 
 setup() {
+    # The script installs its own EXIT trap, which would replace bats' and
+    # make failing tests vanish from the report instead of showing "not ok".
+    local bats_exit_trap
+    bats_exit_trap="$(trap -p EXIT)"
     source "${BATS_TEST_DIRNAME}/../disk-explorer.sh"
+    eval "${bats_exit_trap:-trap - EXIT}"
+    trap - INT TERM
 }
 
 # -- detect_platform ----------------------------------------------------------
@@ -36,7 +42,7 @@ setup() {
     local stub_dir
     stub_dir="$(mktemp -d)"
     # Creer des stubs minimaux pour tous les outils g-prefixes
-    for tool in gfind gsort ghead gdu gnumfmt; do
+    for tool in gfind gsort ghead gdu gnumfmt gawk; do
         printf '#!/usr/bin/env bash\necho "GNU %s"\n' "$tool" > "$stub_dir/$tool"
         chmod +x "$stub_dir/$tool"
     done
@@ -110,7 +116,11 @@ _make_date_stub() {
     stub_dir="$(mktemp -d)"
     cat > "$stub_dir/date" << 'STUBEOF'
 #!/usr/bin/env bash
-# Stub: translate GNU "date -d @epoch fmt" to BSD "date -r epoch fmt"
+# Stub: translate GNU "date -d @epoch fmt" to BSD "date -r epoch fmt", only
+# where the system date is BSD (on GNU date, -r means "reference file").
+if /bin/date -d @0 >/dev/null 2>&1; then
+    exec /bin/date "$@"
+fi
 args=("$@")
 new_args=()
 i=0

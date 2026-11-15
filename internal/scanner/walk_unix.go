@@ -13,54 +13,59 @@ import (
 // macOS only.
 type listCtx struct{}
 
-func listDir(_ *listCtx, path string, wantStat bool, fsHint int64, allowKern bool) (entries []walkEntry, dirSize int64, fsType int64, subdirs int, err error) {
+func listDir(_ *listCtx, path string, wantStat bool, fsHint int64, allowKern bool) ([]walkEntry, dirInfo, error) {
+	var info dirInfo
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, 0, 0, 0, err
+		return nil, info, err
 	}
 	defer f.Close()
 	fd := int(f.Fd())
 
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err == nil {
-		dirSize = st.Blocks * 512
+		info.size = int64(st.Blocks) * 512
+		info.dev = uint64(st.Dev)
 	}
+	info.fsType = fsHint
 	if wantStat {
 		var stfs unix.Statfs_t
 		if err := unix.Fstatfs(fd, &stfs); err == nil {
-			fsType = int64(stfs.Type)
-		} else {
-			fsType = fsHint
+			info.fsType = int64(stfs.Type)
 		}
-	} else {
-		fsType = fsHint
 	}
 	// Same pseudo-filesystem shortcut as the Linux path: the caller drops
 	// these entries, so skip stat-ing them (roots still list their entries).
-	if !allowKern && fsType != 0 && isKernFS(fsType) {
-		return nil, dirSize, fsType, 0, nil
+	if !allowKern && info.fsType != 0 && isKernFS(info.fsType) {
+		return nil, info, nil
 	}
 
 	names, err := f.Readdirnames(-1)
 	if err != nil {
-		return nil, dirSize, fsType, 0, err
+		return nil, info, err
 	}
-	entries = make([]walkEntry, 0, len(names))
+	entries := make([]walkEntry, 0, len(names))
 	for _, name := range names {
 		if name == "." || name == ".." {
 			continue
 		}
 		var cst unix.Stat_t
 		if err := unix.Fstatat(fd, name, &cst, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			if err != unix.ENOENT {
+				info.statErrs++
+				if info.statErr == nil {
+					info.statErr = err
+				}
+			}
 			continue
 		}
 		isDir := cst.Mode&unix.S_IFMT == unix.S_IFDIR
 		if isDir {
-			subdirs++
+			info.subdirs++
 		}
 		sz := int64(0)
 		if !isDir {
-			sz = cst.Blocks * 512
+			sz = int64(cst.Blocks) * 512
 		}
 		entries = append(entries, walkEntry{
 			name:    name,
@@ -72,5 +77,5 @@ func listDir(_ *listCtx, path string, wantStat bool, fsHint int64, allowKern boo
 			nlink:   uint64(cst.Nlink),
 		})
 	}
-	return entries, dirSize, fsType, subdirs, nil
+	return entries, info, nil
 }

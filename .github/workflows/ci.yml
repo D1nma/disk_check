@@ -20,11 +20,62 @@ jobs:
       - name: Build
         run: go build ./...
 
-      - name: Test
-        run: go test ./...
+      - name: Lint (gofmt, vet)
+        run: |
+          unformatted="$(gofmt -l cmd internal)"
+          if [ -n "$unformatted" ]; then echo "gofmt needed:"; echo "$unformatted"; exit 1; fi
+          go vet ./...
 
-      - name: Lint (vet)
-        run: go vet ./...
+      # The scanner is concurrent (worker pool, atomics, per-worker arenas):
+      # always run the tests under the race detector.
+      - name: Test (race detector)
+        run: go test -race ./...
+
+  macos:
+    # walk_unix.go, mtime_darwin.go and the darwin statfs paths only run here.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Vet and test
+        run: |
+          go vet ./...
+          go test ./...
+
+  bash:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # build.sh derives VERSION / BINARY_TAG from tags
+
+      - name: Install bats and shellcheck
+        run: sudo apt-get update && sudo apt-get install -y bats shellcheck
+
+      - name: Generated disk-explorer.sh is in sync with src/
+        run: |
+          cp disk-explorer.sh "$RUNNER_TEMP/committed.sh"
+          ./build.sh
+          # VERSION and BINARY_TAG depend on when the file was built.
+          filter() { grep -vE '^(VERSION|BINARY_TAG)=' "$1"; }
+          if ! diff -u <(filter "$RUNNER_TEMP/committed.sh") <(filter disk-explorer.sh); then
+            echo "::error::disk-explorer.sh is stale: run ./build.sh and commit the result"
+            exit 1
+          fi
+
+      - name: shellcheck (errors)
+        run: shellcheck -s bash -S error src/*.sh disk-explorer.sh build.sh install.sh
+
+      - name: Custom test suite
+        run: bash tests/run_tests.sh
+
+      - name: Bats
+        run: bats tests/is_integer.bats tests/platform_compat.bats
 
   cross-compile:
     # Guard every release target (see release.yml) so a broken build tag on

@@ -22,9 +22,9 @@ jobs:
           jules_api_key: ${{ secrets.JULES_API_KEY }}
           prompt: |
             Perform a 360° audit of disk-explorer following guidelines in AGENTS.md and memory in .jules/:
-            - Security (Sentinel): safe escaping for remote SSH arguments, circular symlink protection.
-            - Performance (Bolt): filepath.WalkDir usage, bounded worker pools for parallel directory scanning, O(1) TUI updates.
+            - Security (Sentinel): safe escaping for remote SSH arguments (src/remote.sh and internal/remote), textsafe.Clean on every printed name, no symlink following.
+            - Performance (Bolt): keep the zero-copy getdents64 scanner (never regress to filepath.WalkDir), bounded worker pools, compact Node (memory), O(1) TUI updates; benchmark before/after.
             - Reliability: standalone Bash fallback portability, terminal resize handling.
             - Quality: build.sh synchronization between src/ and embedded assets.
-            - Tests: run `go test ./...` and `tests/run_tests.sh`.
+            - Tests: run `go test -race ./...`, `tests/run_tests.sh` and the bats suites.
             Implement a safe optimization or fix and open a PR.

@@ -7,29 +7,40 @@ curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/install.sh | 
 ```
 
 ```
-DISK EXPLORER  /home/user  ALL · size ↓  ⠋
-███████████████░░░░░ 78%  92.0 GiB / 116.6 GiB
-────────────────────────────────────────────────────────
->    21.3 GiB  ██████████  .cargo/
-     18.7 GiB  █████████░  node_modules/
-      6.1 GiB  ███░░░░░░░  .local/
-    512.0 MiB  ██░░░░░░░░  archive.tar.gz
-    128.0 MiB  █░░░░░░░░░  Downloads/
-────────────────────────────────────────────────────────
-[↑↓/jk] nav  [Enter] cd  [←/h] retour  [s]ize [n]ame [t]ime  [q]uit
+DISK EXPLORER  /var  TOUT · taille ↓  v2.3.0
+███████████████░░░░░ 78%  92.0 GiB / 116.6 GiB  · libre 24.6 GiB  ▲ +45.0 MiB/s → plein dans 9m
+  31.2 GiB  27% du disque  1204331 fichiers  98211 dossiers  modifié < 24 h : 3.4 GiB  ⚠ 2 illisible(s) [e]
+────────────────────────────────────────────────────────────────────────────────────────────
+>   21.3 GiB   68.3%  ██████████    +3.2 GiB  lib/  · données Docker
+     6.1 GiB   19.6%  ███░░░░░░░    +0.2 MiB  log/  ⚠
+★  512.0 MiB    1.6%  ░░░░░░░░░░    ±0        cache/  · cache de paquets apt
+────────────────────────────────────────────────────────────────────────────────────────────
+  données Docker → docker system df  puis  docker system prune · Δ +3.2 GiB depuis le 13/11 09:12
+[?] aide  [⏎] ouvrir  [←] retour  [s/n/t/c] tri  [espace] marquer  [d] suppr  [f] gros fichiers  …
 ```
+
+Built for the disk-full incident on a server: not only *what is big*, but
+*what grew, who is writing, why `df` disagrees with the scan, and what can be
+removed safely* — locally or on any Linux host over SSH, without installing
+anything there.
 
 ---
 
 ## Features
 
-- **Real-time TUI** — built with [Bubble Tea](https://github.com/charmbracelet/bubbletea); shows a detailed progress screen during scanning and then switches to an instant browsing view
-- **Full scanning** — high-performance parallel scan at startup builds a complete in-memory tree for zero-latency navigation (O(1))
-- **Non-interactive modes** — `--summary`, `--report`, `--tree` for scripting and CI pipelines
-- **Auto-update** — checks for new releases at startup; `--update` upgrades to the latest binary
-- **SHA256 verification** — all downloaded binaries are verified against the release `SHA256SUMS` file
-- **Bash fallback** — full-featured Bash implementation for offline or unsupported environments
-- **Remote scans over SSH** — via the `disk-explorer.sh` distribution script and your system `ssh`; runs one scan per host and aggregates the reports (Go binary: not yet)
+- **Fast full scan** — parallel scanner (zero-copy `getdents64` on Linux) builds the whole tree once; navigation is instant (O(1)), no re-scan.
+- **Honest numbers** — unreadable directories are flagged (⚠), listed (`e`) and turn the exit code to 2; hard links are counted once and attributed deterministically; "really freeable" accounts for links that live elsewhere.
+- **What grew?** — every scan records a small snapshot; the next one shows a Δ column (`c` sorts by growth) and the summary lists the biggest growths. Bytes modified in the last 24 h are shown even on the first run.
+- **Real progress** — percentage and ETA from the filesystem's used-inode count (or the previous snapshot).
+- **Why does `df` disagree?** — `w` in the TUI or `--why PATH`: deleted-but-still-open files (process, PID and the command to free them), unreadable directories, reserved blocks, unexplained remainder.
+- **Live activity** — header shows the fill rate and time-to-full; `a` lists the files growing right now and the processes writing.
+- **Knows what paths are** — Docker overlay layers, container logs and volumes, Kubernetes pods, podman, containerd, journald, package caches, core dumps, rotated logs, `node_modules`, `target/`… with the *proper* cleanup command (`docker image prune`, `journalctl --vacuum-size`, `apt-get clean`…).
+- **Safe actions** — mark entries (`space`), review (`m`), write a reviewable cleanup script (`x`), delete with confirmation (`d`, `D`) or forbid it (`--read-only`); rescan the current directory (`r`); copy a path to your local clipboard even through SSH (`y`, OSC 52).
+- **Agentless remote scans** — `--ssh host:/path` pushes the right static binary (14 architectures) through SSH, scans, brings the tree back and cleans up. Several hosts give a fleet table.
+- **Open formats** — `--json`, `--export`/`--import` (ncdu JSON, both ways), `--prom` (node_exporter textfile collector).
+- **Safe output** — file names are attacker-controlled: control characters, terminal escapes and bidi overrides are neutralised everywhere.
+- **Auto-update** — background check (opt out with `DISK_EXPLORER_NO_UPDATE=1`), SHA256-verified, semver-aware.
+- **Bash fallback** — full Bash implementation for hosts without a matching binary.
 
 ---
 
@@ -49,7 +60,7 @@ Installs the binary to `~/.local/bin`. Override with `DISK_EXPLORER_INSTALL_DIR=
 curl -fsSL https://raw.githubusercontent.com/D1nma/disk_check/main/disk-explorer.sh | bash
 ```
 
-On a tagged release, the script downloads and caches the binary automatically. On untagged builds (or offline), it runs the full Bash fallback.
+The script downloads, verifies and caches the Go binary of the release it was built from: the exact tag, or else the latest release tag reachable from its commit, so the copy on `main` uses the latest release. It runs the binary when every option has a Go equivalent (`--path DIR` becomes the positional path, `--top-count N` becomes `--top N`). Bash-only options (`--remote*`, `--self-check`, `--sort mtime`, `--file-size apparent`, `--max-depth`, `--top-files`, `--no-default-excludes`, `--help`, `--bash`) use the full Bash fallback. So do builds with no release tag and runs where the download fails (for example offline).
 
 ---
 
@@ -64,50 +75,120 @@ disk-explorer [PATH]
 disk-explorer --mode partition /
 ```
 
-**Key bindings**
+**Key bindings** (`?` shows them in the TUI)
 
 | Key | Action |
 |-----|--------|
-| `↑` `↓` / `k` `j` | Navigate the list |
-| `Enter` | Open directory (instant, no re-scan) |
-| `Backspace` / `←` / `h` | Go to parent directory (instant, no re-scan) |
-| `s` | Sort by size (press again to reverse) |
-| `n` | Sort by name (press again to reverse) |
-| `t` | Sort by modification date (press again to reverse) |
-| `u` | Install a downloaded update and restart (shown in the banner when ready) |
-| `i` | Ignore the downloaded update for this session |
+| `↑` `↓` / `k` `j`, `PgUp` `PgDn`, `g` `G` | Navigate the list |
+| `Enter` / `→` / `l` | Open directory (instant, no re-scan) |
+| `Backspace` / `←` / `h` | Go to parent directory |
+| `s` `n` `t` `c` | Sort by size / name / date / growth since the last scan (again: reverse) |
+| `f` | Largest files below the current directory (`Enter` jumps to the file) |
+| `e` | Unreadable directories (the scan is incomplete) |
+| `w` | Why `df` ≠ scan for this filesystem |
+| `a` | Live activity: growing files, writing processes |
+| `space` | Mark / unmark (running total in the footer) |
+| `m` | Review marks: `x` writes a cleanup script to review, `D` deletes them all |
+| `d` | Delete the selection (confirmation; disabled by `--read-only`, remote and imported trees) |
+| `r` | Rescan the current directory |
+| `y` | Copy the path to the clipboard (OSC 52, works over SSH/tmux) |
+| `u` / `i` | Install / ignore a downloaded update |
 | `q` / `Ctrl+C` | Quit |
+
+The detail line under the list says, for the selected entry, what deleting it
+really frees (hard links), recent writes, growth, and what the path is
+(container, cache) with the suggested cleanup command.
 
 ### Non-interactive modes
 
 ```bash
-# Print top directories and files to stdout
-disk-explorer --summary /var
-
-# Skip one or more paths from the Go scan (options precede PATH)
-disk-explorer --summary --exclude /var/cache --exclude /var/tmp /var
-
-# Write a timestamped report to a file
-disk-explorer --report /var
+disk-explorer --summary /var                 # top directories/files, growth, warnings
+disk-explorer --json /var | jq .top_dirs     # same, as JSON
+disk-explorer --tree --tree-depth 5 /var     # tree view with sizes and percentages
 disk-explorer --report --report-dir ~/reports /var
+disk-explorer --why /                        # explain df vs scan for this filesystem
 
-# Tree view with sizes and percentages
-disk-explorer --tree /var
-disk-explorer --tree --tree-depth 5 /var
-
-# Show 30 entries instead of the default 20
+# Options precede PATH
+disk-explorer --summary --exclude /var/cache --exclude /var/tmp /var
 disk-explorer --top 30 --summary /
-
-# Limit concurrent directory scans on slow or remote storage (0 = automatic)
-disk-explorer --scan-workers 4 --summary /mnt/archive
+disk-explorer --scan-workers 4 --summary /mnt/archive   # slow/remote storage
 ```
+
+Without a mode flag and with stdout redirected, the summary is printed (as the
+Bash version does). Outputs combine on a single scan, which suits cron:
+
+```bash
+# every hour: Prometheus metrics for node_exporter + a saved scan
+disk-explorer --mode partition --prom /var/lib/node_exporter/textfile/disk.prom \
+              --export /var/tmp/disk-scan.json /
+```
+
+Exit codes: `0` ok, `1` fatal (path missing or unreadable), `2` partial scan
+(unreadable directories), `64` usage error.
+
+### Scan history and growth
+
+Each complete scan (TUI or not) stores the sizes of entries ≥ 1 MiB in
+`~/.local/state/disk-explorer/snapshots` (`$XDG_STATE_HOME`,
+`$DISK_EXPLORER_STATE_DIR`; 20 per root, a few hundred KiB). The next scan of
+the same root, mode and exclusions shows the Δ column and the growth section.
+Disable with `--no-snapshot` or `DISK_EXPLORER_NO_SNAPSHOT=1`.
+
+### Remote hosts over SSH
+
+```bash
+disk-explorer --ssh web1:/var                  # TUI on the remote tree
+disk-explorer --ssh root@db1:/ --summary        # or any output: --json, --tree, --export, --prom
+disk-explorer --ssh web1,web2,db1 /             # several hosts: fleet table
+disk-explorer --hosts-file servers.txt --ssh-jobs 8 --report --report-dir reports/
+disk-explorer --ssh admin@nas --ssh-sudo --ssh-opt "-p 2222" /volume1
+```
+
+The remote host needs only `sh` and `mktemp`: no Bash, no coreutils, no
+Internet. disk-explorer asks `uname -sm`, sends its own binary (or the release
+binary for that architecture, downloaded once, SHA256-verified and cached),
+runs it in a private temporary directory (falls back if `/tmp` is `noexec`),
+reads the tree back and removes the binary. Authentication is your usual SSH
+setup (`BatchMode=yes`: keys or agent). `--ssh-sudo` runs `sudo -n`.
+Remote trees are read-only in the TUI; marks still produce a cleanup script
+you can run on the host. Remote scans are recorded per host for growth.
+
+The Bash distribution script keeps its own `--remote` mode
+(`disk-explorer.sh --remote --remote-hosts user@host1,user@host2`).
+
+### Export, import, Prometheus
+
+```bash
+disk-explorer --export scan.json /srv     # ncdu's JSON export format (format 1.2)
+disk-explorer --import scan.json          # browse it later, elsewhere (read-only)
+ncdu -o- /srv | disk-explorer --import - --summary
+disk-explorer --prom /var/lib/node_exporter/textfile/disk.prom --prom-depth 2 /
+```
+
+The import accepts ncdu JSON exports too (hard links counted once, unreadable
+and excluded entries honoured); a scan exported by disk-explorer is meant to
+open in `ncdu -f`, but that direction is not yet tested in CI.
+
+`--prom` writes `disk_explorer_directory_bytes{host,path}`, `..._files`,
+`..._incomplete` and the scan timestamp for directories down to
+`--prom-depth` (≥ 100 MiB), atomically.
+
+### Environment
+
+| Variable | Effect |
+|----------|--------|
+| `DISK_EXPLORER_NO_UPDATE` | no background update check |
+| `DISK_EXPLORER_NO_SNAPSHOT` | no scan history |
+| `DISK_EXPLORER_STATE_DIR` | where snapshots are kept |
+| `DISK_EXPLORER_PLAN_DIR` | where `x` writes cleanup scripts (default: current directory) |
+| `NO_COLOR` | no colours |
 
 ### Maintenance
 
 ```bash
 disk-explorer --version          # print the current version
 disk-explorer --update           # download, verify and install the latest release
-disk-explorer --bash             # force the Bash fallback (skip Go binary)
+disk-explorer.sh --bash          # distribution script: force the Bash fallback (skip Go binary)
 ```
 
 In the TUI, the update check runs in the background; when a newer release
@@ -131,16 +212,6 @@ The automatic scanner starts with one background worker and grows the pool when 
 
 For scanner-only Go measurements of wide and deep trees, run `go test ./internal/scanner -run '^$' -bench BenchmarkScan -benchmem`.
 
-### Remote scan (SSH)
-
-```bash
-disk-explorer --remote --remote-hosts user@host1,user@host2
-```
-
-Runs through the `disk-explorer.sh` distribution script with your system `ssh`
-(each host is scanned over SSH and the reports are aggregated). The compiled
-Go binary does not offer this mode yet.
-
 ---
 
 ## Repository structure
@@ -151,9 +222,16 @@ disk-explorer.sh         # distribution script (bootstrap + bash fallback)
 build.sh                 # assembles src/*.sh → disk-explorer.sh
 cmd/disk-explorer/       # Go entry point
 internal/
-  tui/                   # Bubble Tea TUI (model, view, update loop)
-  scanner/               # parallel scanner: zero-copy listing, TopFiles, mountinfo
-  display/               # non-interactive formatters (summary, tree)
+  tui/                   # Bubble Tea TUI (model, view, actions)
+  scanner/               # parallel scanner: zero-copy listing, errors, hard links, mountinfo
+  display/               # non-interactive formatters (summary, JSON, tree)
+  snapshot/              # scan history (growth since the last scan)
+  reconcile/             # df vs scan: deleted-but-open files, reserved blocks
+  live/                  # fill rate, time-to-full, growing files and writers
+  annotate/              # docker/k8s/cache path labels and cleanup commands
+  export/                # ncdu JSON export/import, Prometheus textfile
+  remote/                # agentless SSH scans
+  textsafe/              # neutralise terminal escapes in untrusted names
   updater/               # GitHub release check and self-update
 src/                     # Bash implementation (fallback)
   main.sh                # constants, arg parsing, dispatch
@@ -162,7 +240,7 @@ src/                     # Bash implementation (fallback)
   display.sh             # summary, report, tree output
   tui.sh                 # full-screen bash TUI
 .github/workflows/
-  ci.yml                 # build + test + vet on every push
+  ci.yml                 # Go (race), macOS, Bash suites, cross-compile
   release.yml            # multi-platform release on v* tag push
 ```
 
@@ -173,7 +251,7 @@ src/                     # Bash implementation (fallback)
 | Mode | Requirements |
 |------|-------------|
 | Go binary (default) | Linux or macOS. Static binaries (`CGO_ENABLED=0`) — any distro: glibc, musl/Alpine, Busybox. Linux archs: `amd64`, `386`, `arm` (ARMv6+ — Raspberry Pi 32-bit), `arm64`, `riscv64`, `ppc64le`, `s390x`, `loong64`, `mips`, `mipsle`, `mips64`, `mips64le` (MIPS builds use softfloat for FPU-less routers). macOS: `amd64`, `arm64`. `install.sh` and the `disk-explorer.sh` bootstrap auto-detect `uname -m`. |
-| Bash fallback | Bash ≥ 4.4, GNU coreutils (`find -printf`, `sort -z`, `du -0`, `head -z`) — used automatically when no binary matches |
+| Bash fallback | Bash ≥ 4.4, GNU coreutils (`find -printf`, `sort -z`, `du -0`, `head -z`) — used automatically when no binary matches, the build has no release tag, or an option is Bash-only |
 
 macOS Bash fallback: `brew install bash coreutils gawk findutils`
 
@@ -186,7 +264,7 @@ git tag v1.2.3
 git push origin v1.2.3
 ```
 
-The `release.yml` workflow builds `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` binaries, generates `SHA256SUMS`, and publishes a GitHub Release automatically.
+The `release.yml` workflow builds the 14 static binaries listed under Requirements (12 Linux architectures, 2 macOS), generates `SHA256SUMS`, and publishes a GitHub Release automatically. Remote scans of hosts of another architecture download those release binaries.
 
 ---
 

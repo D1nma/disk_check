@@ -9,7 +9,8 @@ High-performance disk usage analyzer and interactive TUI written in Go with a st
 - **Go CLI entry point**: `cmd/disk-explorer/main.go`
 - **Internal packages** (`internal/`):
   - `scanner/`: High-performance parallel recursive filesystem scanning with worker pools and atomic metrics.
-  - `tui/`: Bubble Tea TUI with instant O(1) directory navigation, sorting, and filtering.
+  - `tui/`: Bubble Tea TUI with instant O(1) directory navigation, sorting (size/name/date/growth), marks, cleanup plan, deletion with confirmation, rescan.
+  - `snapshot/`, `reconcile/`, `live/`, `annotate/`, `export/`, `remote/`, `textsafe/`: scan history, df-vs-scan, live activity, path annotations, ncdu/Prometheus formats, agentless SSH scans, terminal-safe names (see `CLAUDE.md` for the full table — it is the reference).
 - **Bash implementation** (`src/`):
   - Modular scripts assembled by `build.sh` into the single-file distributable `disk-explorer.sh`.
 - **Tests**: Go unit tests beside packages (`*_test.go`), Bash smoke tests in `tests/run_tests.sh`.
@@ -26,7 +27,7 @@ go build ./cmd/disk-explorer   # Build the Go binary locally
 tests/run_tests.sh             # Run Bash smoke tests
 ```
 
-*Note: Always run `./build.sh` after editing files in `src/` to ensure the generated shell script and Go embedded asset stay in sync.*
+*Note: Always run `./build.sh` after editing files in `src/`: `disk-explorer.sh` is generated (there is no embedded Go asset). CI fails when it is stale.*
 
 ---
 
@@ -44,13 +45,15 @@ tests/run_tests.sh             # Run Bash smoke tests
 When reviewing, maintaining, or generating optimizations for this repository, Jules MUST inspect code across these 6 core dimensions:
 
 ### 🛡️ 1. Sécurité & Injection de Commandes (Security / Sentinel)
-- **SSH & Remote Host Injection**: Remote hostnames, SSH ports, and scan paths in `src/remote.sh` must be strictly sanitized. Never interpolate unsanitized strings directly into `exec.Command("ssh", ...)` or `eval`.
+- **SSH & Remote Host Injection**: Remote hostnames, SSH ports, and scan paths must be strictly validated — in `src/remote.sh` (Bash `--remote`) and in `internal/remote` (Go `--ssh`: `ParseTarget`, `checkRemoteArg`; the remote script must stay free of `'` and `\`). Never interpolate unsanitized strings into a shell command or `eval`.
+- **Terminal Injection**: file names, paths, process and container names are attacker-controlled. Pass them through `textsafe.Clean` before any terminal or report output (OSC 52 / title / cursor sequences, bidi overrides).
 - **Symlink Traversal & Directory Traversal**: Prevent infinite recursion on circular symlinks (`scanner` must track visited inodes or respect symlink following flags).
-- **Filesystem Permissions**: The scanner should gracefully handle `EACCES` / permission-denied errors on restricted directories without aborting the scan.
+- **Filesystem Permissions**: The scanner must handle `EACCES` without aborting, and must report it: `FlagUnreadable`/`FlagPartial`, `ScanProgress.Errors`, exit code 2. Never drop an error silently.
 
 ### ⚡ 2. Performance & Optimisation Concurrente (Performance / Bolt)
 - **Parallel Scanning & Goroutine Pools**: File scanning must use bounded worker pools or semaphore channels to avoid spawning millions of goroutines and exhausting file descriptors.
-- **Slice & Buffer Reallocation**: Minimize memory allocations during directory walks (`filepath.WalkDir` instead of `filepath.Walk`). Re-use slices and string builders where possible.
+- **Directory listing**: on Linux the scanner parses `getdents64` itself and calls `newfstatat` directly (zero-copy, slab-interned names, per-worker buffers). Do **not** replace it with `filepath.Walk`/`WalkDir`/`os.ReadDir`: they are slower. Measure with `go test ./internal/scanner -bench BenchmarkScan -benchmem` before and after any change.
+- **Memory** is the scaling limit (~150 B per entry): keep `Node` compact (new per-node data goes in padding or in sparse maps on the scan result).
 - **Bubble Tea TUI Responsiveness**: Navigation and sorting of large directory trees (100k+ files) must remain O(1) or cached; do not block the Bubble Tea update loop with heavy computations.
 
 ### 🧩 3. Robustesse & Résilience (Reliability & Portability)
@@ -63,7 +66,7 @@ When reviewing, maintaining, or generating optimizations for this repository, Ju
 
 ### 🧪 5. Tests & Non-Régression (Test Coverage)
 - Scanner speed, sorting algorithms, and remote string parsing must be covered by Go unit tests.
-- All Go tests (`go test ./...`) and Bash tests must pass.
+- All Go tests (`go test -race ./...`), `tests/run_tests.sh` and bats must pass. Linux-only tests go in `*_linux_test.go` (the macOS CI job compiles the rest).
 
 ### 📦 6. Déploiement & Binaire Autonome (Zero-Dependency Delivery)
 - The compiled Go binary must have zero runtime CGO dependencies (`CGO_ENABLED=0` for static cross-platform portability).

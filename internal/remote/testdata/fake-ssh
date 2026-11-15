@@ -1,0 +1,18 @@
+#!/bin/sh
+# Stand-in for ssh(1) in tests: ignores options, runs the command locally
+# with sh (the "remote login shell"), passes stdin/stdout/stderr through.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -O) exit 0 ;;
+    -o|-p|-i|-l|-F|-J) shift 2 ;;
+    --) shift; break ;;
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+host=$1; shift
+if [ "$host" = "badhost" ]; then
+  echo "ssh: Could not resolve hostname badhost: Name or service not known" >&2
+  exit 255
+fi
+exec sh -c "$*"

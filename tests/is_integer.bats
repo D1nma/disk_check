@@ -1,7 +1,13 @@
 #!/usr/bin/env bats
 
 setup() {
+    # The script installs its own EXIT trap, which would replace bats' and
+    # make failing tests vanish from the report instead of showing "not ok".
+    local bats_exit_trap
+    bats_exit_trap="$(trap -p EXIT)"
     source "${BATS_TEST_DIRNAME}/../disk-explorer.sh"
+    eval "${bats_exit_trap:-trap - EXIT}"
+    trap - INT TERM
 }
 
 @test "is_integer: positive integer" {

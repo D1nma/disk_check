@@ -46,17 +46,100 @@ func LatestRelease() (string, error) {
 	return payload.TagName, nil
 }
 
-// UpdateAvailable returns (latestTag, true) when a newer version exists.
-// Returns ("", false) for dev builds or when the check fails.
+// UpdateAvailable returns (latestTag, true) when a strictly newer version
+// exists. Returns ("", false) for dev builds or when the check fails.
 func UpdateAvailable(current string) (string, bool) {
 	if current == "dev" || current == "" || !strings.HasPrefix(current, "v") {
 		return "", false
 	}
 	latest, err := LatestRelease()
-	if err != nil || latest == "" || latest == current {
+	if err != nil || latest == "" || !Newer(latest, current) {
 		return latest, false
 	}
 	return latest, true
+}
+
+// CheckEnabled reports whether the background update check may contact
+// GitHub: it is off when DISK_EXPLORER_NO_UPDATE is set (air-gapped
+// servers, package-managed installs, privacy).
+func CheckEnabled() bool {
+	return os.Getenv("DISK_EXPLORER_NO_UPDATE") == ""
+}
+
+// CanSelfUpdate reports whether the running binary can be replaced in place
+// (its directory is writable). When it cannot (root-owned /usr/local/bin,
+// package manager), the TUI only announces the release.
+func CanSelfUpdate() bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	f, err := os.CreateTemp(filepath.Dir(exe), ".disk-explorer-write-test-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	f.Close()
+	os.Remove(name)
+	return true
+}
+
+// Newer reports whether release tag a is a strictly higher version than b
+// (vMAJOR.MINOR.PATCH[-pre]; a pre-release sorts before its release). Tags
+// that do not parse are never considered newer, so a malformed answer from
+// the API cannot trigger a "downgrade".
+func Newer(a, b string) bool {
+	va, okA := parseVersion(a)
+	vb, okB := parseVersion(b)
+	if !okA || !okB {
+		return false
+	}
+	for i := 0; i < 3; i++ {
+		if va.num[i] != vb.num[i] {
+			return va.num[i] > vb.num[i]
+		}
+	}
+	switch {
+	case va.pre == vb.pre:
+		return false
+	case va.pre == "":
+		return true // release > its pre-release
+	case vb.pre == "":
+		return false
+	}
+	return va.pre > vb.pre
+}
+
+type version struct {
+	num [3]int
+	pre string
+}
+
+func parseVersion(s string) (version, bool) {
+	var v version
+	if !releaseTag.MatchString(s) {
+		return v, false
+	}
+	s = strings.TrimPrefix(s, "v")
+	if i := strings.IndexByte(s, '-'); i >= 0 {
+		v.pre = s[i+1:]
+		s = s[:i]
+	}
+	parts := strings.Split(s, ".")
+	if len(parts) > 3 {
+		return v, false
+	}
+	for i, p := range parts {
+		n := 0
+		for _, c := range p {
+			n = n*10 + int(c-'0')
+			if n > 1<<24 {
+				return v, false
+			}
+		}
+		v.num[i] = n
+	}
+	return v, true
 }
 
 // Prefetch downloads the release binary for tag, verifies it against the
@@ -64,44 +147,53 @@ func UpdateAvailable(current string) (string, bool) {
 // executable so Install can swap it in with an atomic rename. It does not
 // touch the running binary.
 func Prefetch(tag string) (string, error) {
-	if !releaseTag.MatchString(tag) {
-		return "", fmt.Errorf("invalid release tag %q", tag)
-	}
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Dir(exe)
-	name := fmt.Sprintf("disk-explorer-%s-%s", runtime.GOOS, runtime.GOARCH)
-	binURL := fmt.Sprintf("%s/releases/download/%s/%s", repoURL, tag, name)
-	sumsURL := fmt.Sprintf("%s/releases/download/%s/SHA256SUMS", repoURL, tag)
-
-	tmpFile, err := os.CreateTemp(dir, "disk-explorer-*.tmp")
+	tmpFile, err := os.CreateTemp(filepath.Dir(exe), "disk-explorer-*.tmp")
 	if err != nil {
 		return "", err
 	}
 	tmp := tmpFile.Name()
 	tmpFile.Close()
-
-	if err := downloadFile(binURL, tmp); err != nil {
-		os.Remove(tmp)
-		return "", fmt.Errorf("download: %w", err)
-	}
-
-	sums, err := fetchText(sumsURL)
-	if err != nil {
-		os.Remove(tmp)
-		return "", fmt.Errorf("checksum list unavailable: %w", err)
-	}
-	if err := verifyChecksum(tmp, name, sums); err != nil {
-		os.Remove(tmp)
-		return "", fmt.Errorf("checksum: %w", err)
-	}
-	if err := os.Chmod(tmp, 0755); err != nil {
+	if err := FetchBinary(tag, runtime.GOOS, runtime.GOARCH, tmp); err != nil {
 		os.Remove(tmp)
 		return "", err
 	}
 	return tmp, nil
+}
+
+// FetchBinary downloads the release binary of tag for goos/goarch into
+// dest (overwritten), verifies it against the release SHA256SUMS and makes
+// it executable. dest is removed on failure. Used for self-updates and to
+// push the right binary to a remote host of another architecture.
+func FetchBinary(tag, goos, goarch, dest string) error {
+	if !releaseTag.MatchString(tag) {
+		return fmt.Errorf("invalid release tag %q", tag)
+	}
+	name := fmt.Sprintf("disk-explorer-%s-%s", goos, goarch)
+	binURL := fmt.Sprintf("%s/releases/download/%s/%s", repoURL, tag, name)
+	sumsURL := fmt.Sprintf("%s/releases/download/%s/SHA256SUMS", repoURL, tag)
+
+	if err := downloadFile(binURL, dest); err != nil {
+		os.Remove(dest)
+		return fmt.Errorf("download: %w", err)
+	}
+	sums, err := fetchText(sumsURL)
+	if err != nil {
+		os.Remove(dest)
+		return fmt.Errorf("checksum list unavailable: %w", err)
+	}
+	if err := verifyChecksum(dest, name, sums); err != nil {
+		os.Remove(dest)
+		return fmt.Errorf("checksum: %w", err)
+	}
+	if err := os.Chmod(dest, 0755); err != nil {
+		os.Remove(dest)
+		return err
+	}
+	return nil
 }
 
 // Install atomically replaces the running executable with the prefetched,

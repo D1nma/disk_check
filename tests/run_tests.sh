@@ -305,6 +305,215 @@ assert_true '
   [[ "${#REMOTE_SSH_OPTS[@]}" -eq 2 && "${REMOTE_SSH_OPTS[0]}" == "-p 2222" ]]
 ' "--remote-ssh-opt: accumule les options répétées"
 
+echo -e "\nRunning tests for remote_build_args..."
+
+assert_true '
+  REMOTE_PATH="/srv"; ANALYSIS_MODE="global"; SORT_MODE="size"
+  TOP_COUNT=15; TOP_FILES_COUNT=20; MAX_DEPTH=-1
+  remote_build_args
+  [[ "${REMOTE_ARGS[0]}" == "--bash" ]]
+' "remote_build_args: --bash en tête (la cible exécute toujours le Bash)"
+
+assert_true '
+  REMOTE_PATH="/srv data"; ANALYSIS_MODE="partition"; SORT_MODE="mtime"
+  TOP_COUNT=5; TOP_FILES_COUNT=7; MAX_DEPTH=3
+  remote_build_args
+  _ra_old_ifs="$IFS"; IFS="|"
+  _ra_joined="${REMOTE_ARGS[*]}"; IFS="$_ra_old_ifs"
+  [[ "$_ra_joined" == "--bash|--path|/srv data|--summary|--no-color|--no-spinner|--mode|partition|--sort|mtime|--top-count|5|--top-files|7|--max-depth|3" ]]
+' "remote_build_args: propage chemin et options de scan"
+
+_test_remote_cmd_bash() {
+  ssh() { printf "%s" "${*: -1}"; }
+  _SCRIPT_SELF="/dev/null"; REMOTE_PATH="/"; REMOTE_SSH_OPTS=()
+  local out_f err_f st_f res_cmd
+  out_f=$(mktemp) err_f=$(mktemp) st_f=$(mktemp)
+  remote_run_host "myhost" "$out_f" "$err_f" "$st_f"
+  res_cmd=$(cat "$out_f")
+  rm -f "$out_f" "$err_f" "$st_f"
+  unset -f ssh
+  [[ "$res_cmd" == "bash -s -- --bash --path / --summary "* ]]
+}
+assert_true "_test_remote_cmd_bash" "remote_run_host: la commande distante force --bash"
+
+echo -e "\nRunning tests for go_args_from_bash_args..."
+
+# _go_expect ATTENDU ARGS... : la traduction réussit et GO_ARGS, joint par
+# « | », vaut ATTENDU.
+_go_expect() {
+  local expected="$1"; shift
+  go_args_from_bash_args "$@" || { echo "    refusé (Bash) au lieu de: $expected"; return 1; }
+  local IFS='|'
+  [[ "${GO_ARGS[*]}" == "$expected" ]] || { echo "    attendu: $expected / obtenu: ${GO_ARGS[*]}"; return 1; }
+}
+# _go_bash_only ARGS... : pas d'équivalent Go, le script doit rester en Bash.
+_go_bash_only() { ! go_args_from_bash_args "$@"; }
+
+assert_true  "_go_expect ''"                                  "go_args: aucun argument → binaire sans argument (TUI)"
+assert_true  "_go_expect '--|/var' --path /var"               "go_args: --path DIR → positionnel"
+assert_true  "_go_expect '--|/var' /var"                      "go_args: chemin positionnel transmis"
+assert_true  "_go_expect '--|-odd' -- -odd"                   "go_args: chemin après -- (commençant par -) protégé par --"
+assert_true  "_go_expect '--|/b' --path /a /b"                "go_args: positionnel après --path l'emporte (comme parse_args)"
+assert_true  "_go_expect '--|/a' /b --path /a"                "go_args: --path après positionnel l'emporte (comme parse_args)"
+assert_true  "_go_expect '--mode|partition' --mode partition" "go_args: --mode partition transmis"
+assert_true  "_go_expect '--mode|global' --mode global"       "go_args: --mode global transmis"
+assert_true  "_go_expect '--exclude|/a|--exclude|/b' --exclude /a --exclude /b" "go_args: --exclude répétable transmis"
+assert_true  "_go_expect '--exclude|/var/cache|--|/var' --exclude cache /var"    "go_args: --exclude relatif résolu depuis le chemin scanné"
+assert_true  "_go_expect '--exclude|/cache|--|/' --path / --exclude cache"       "go_args: --exclude relatif sous /"
+assert_true  "_go_expect '--exclude|cache' --exclude cache"   "go_args: --exclude relatif sans chemin → répertoire courant (identique)"
+assert_true  "_go_expect '--summary' --summary"               "go_args: --summary transmis"
+assert_true  "_go_expect '--report' --report"                 "go_args: --report transmis"
+assert_true  "_go_expect '--tree' --tree"                     "go_args: --tree transmis"
+assert_true  "_go_expect '--tree' --summary --tree"           "go_args: dernier mode gagnant (comme parse_args)"
+assert_true  "_go_expect '' --summary --interactive"          "go_args: --interactive → TUI (mode par défaut Go)"
+assert_true  "_go_expect '--tree|--tree-depth|5|--|/var' --tree --tree-depth 5 /var" "go_args: --tree-depth transmis"
+assert_true  "_go_expect '--report|--report-dir|/r|--|/var' --report --report-dir /r /var" "go_args: --report-dir transmis"
+assert_true  "_go_expect '--summary|--top|30' --top-count 30 --summary" "go_args: --top-count N → --top N"
+assert_true  "_go_expect '--summary' --sort size --file-size real --summary" "go_args: --sort size / --file-size real (défauts Go) retirés"
+assert_true  "_go_expect '--|/var' --no-spinner --interactive /var" "go_args: --no-spinner retiré"
+assert_true  "_go_expect '--version' --version"               "go_args: --version transmis"
+assert_true  "_go_expect '--mode|partition|--exclude|/proc|--summary|--top|10|--|/srv' --mode partition --exclude /proc --summary --no-color --no-spinner --top-count 10 --path /srv" \
+  "go_args: combinaison mixte traduite"
+
+assert_true  'go_args_from_bash_args --no-color --summary && [[ "$GO_NO_COLOR" -eq 1 && "${GO_ARGS[*]}" == "--summary" ]]' \
+  "go_args: --no-color retiré, GO_NO_COLOR=1"
+assert_true  'go_args_from_bash_args --no-color && go_args_from_bash_args --summary && [[ "$GO_NO_COLOR" -eq 0 ]]' \
+  "go_args: GO_NO_COLOR remis à 0 à chaque appel"
+
+for _go_case in \
+  "--remote" "--remote --remote-hosts h1" "--remote-hosts h1" "--remote-hosts-file hosts.txt" \
+  "--remote-path /" "--remote-report-dir out" "--remote-timeout 5" "--remote-ssh-opt -p2222" \
+  "--self-check" "--sort mtime" "--file-size apparent" "--max-depth 2" "--max-depth -1" \
+  "--top-files 20" "--no-default-excludes" "--debug-tui" "--bash" "-h" "--help" \
+  "--bogus" "--scan-workers 4" "--update" "--path=/var" "--top-count=5" \
+  "--summary /var --remote" "--summary --bash /var" "--top-count 10 --top-files 10"; do
+  # eval découpe le cas en mots (un cas = option + valeur éventuelle).
+  assert_true "_go_bash_only $_go_case" "go_args: reste en Bash pour « $_go_case »"
+done
+unset _go_case
+
+assert_true  "_go_bash_only --mode foo"          "go_args: --mode invalide → Bash (erreur de parse_args)"
+assert_true  "_go_bash_only --top-count abc"     "go_args: --top-count non entier → Bash"
+assert_true  "_go_bash_only --top-count 010"     "go_args: --top-count à zéro de tête (octal pour flag Go) → Bash"
+assert_true  "_go_bash_only --top-count 10001"   "go_args: --top-count au-delà du maximum → Bash"
+assert_true  "_go_bash_only --tree-depth -1"     "go_args: --tree-depth négatif → Bash"
+assert_true  "_go_bash_only --tree-depth 1025"   "go_args: --tree-depth au-delà du maximum → Bash"
+assert_true  "_go_bash_only --exclude '/var/*'"  "go_args: --exclude avec glob → Bash (refusé par prepare_exclusions)"
+assert_true  "_go_bash_only --exclude ''"        "go_args: --exclude vide → Bash"
+assert_true  "_go_bash_only --report-dir ''"     "go_args: --report-dir vide → Bash"
+assert_true  "_go_bash_only --path ''"           "go_args: --path vide → Bash"
+assert_true  "_go_bash_only ''"                  "go_args: chemin positionnel vide → Bash"
+assert_true  "_go_bash_only --path"              "go_args: valeur manquante (--path) → Bash"
+assert_true  "_go_bash_only --summary --top-count" "go_args: valeur manquante (--top-count) → Bash"
+assert_true  "_go_bash_only /a /b"               "go_args: deux chemins positionnels → Bash (erreur de parse_args)"
+assert_true  "_go_bash_only /a -- /b"            "go_args: positionnel avant et après -- → Bash"
+
+echo -e "\nRunning tests for try_go_binary (BINARY_TAG, faux binaire, sans réseau)..."
+
+# Faux binaire en cache : affiche NO_COLOR puis ses arguments.
+_go_fake_cache=$(mktemp -d)
+_go_empty_cache=$(mktemp -d)
+cat > "$_go_fake_cache/disk-explorer" <<'EOF'
+#!/usr/bin/env bash
+printf 'GO NO_COLOR=%s' "${NO_COLOR-unset}"
+(( $# == 0 )) || printf ' %s' "$@"
+EOF
+chmod +x "$_go_fake_cache/disk-explorer"
+
+# _go_bootstrap TAG ARGS... : lance try_go_binary dans un sous-shell (cache
+# = $_go_cache, téléchargement neutralisé) ; affiche « BASH » s'il rend la main.
+_go_bootstrap() {
+  local tag="$1"; shift
+  (
+    unset NO_COLOR
+    BINARY_TAG="$tag"
+    CACHE_DIR="${_go_cache:-$_go_fake_cache}"
+    download_binary() { return 1; }
+    try_go_binary "$@" 2>/dev/null
+    printf 'BASH'
+  )
+}
+
+assert_true '[[ "$(_go_bootstrap v9.9.9 --path /tmp --summary)" == "GO NO_COLOR=unset --summary -- /tmp" ]]' \
+  "try_go_binary: BINARY_TAG vX → exec du binaire avec les arguments traduits"
+assert_true '[[ "$(_go_bootstrap v9.9.9 --no-color --summary)" == "GO NO_COLOR=1 --summary" ]]' \
+  "try_go_binary: --no-color → NO_COLOR=1 exporté pour le binaire"
+assert_true '[[ "$(_go_bootstrap v9.9.9)" == "GO NO_COLOR=unset" ]]' \
+  "try_go_binary: sans argument → binaire sans argument"
+assert_true '[[ "$(_go_bootstrap "" --summary)" == "BASH" ]]' \
+  "try_go_binary: BINARY_TAG vide → pas d'exec (Bash)"
+assert_true '[[ "$(_go_bootstrap 5dd945f --summary)" == "BASH" ]]' \
+  "try_go_binary: BINARY_TAG hash (hors vX) → pas d'exec"
+assert_true '[[ "$(_go_bootstrap dev --summary)" == "BASH" ]]' \
+  "try_go_binary: BINARY_TAG dev → pas d'exec"
+assert_true '[[ "$(_go_bootstrap v9.9.9 --remote --remote-hosts h1)" == "BASH" ]]' \
+  "try_go_binary: option Bash seule (--remote) → pas d'exec"
+assert_true '[[ "$(_go_bootstrap v9.9.9 --bash --summary)" == "BASH" ]]' \
+  "try_go_binary: --bash → pas d'exec"
+assert_true '[[ "$(_go_cache="$_go_empty_cache" _go_bootstrap v9.9.9 --summary)" == "BASH" ]]' \
+  "try_go_binary: binaire absent et téléchargement en échec → Bash"
+
+_test_download_url() {
+  local d rc
+  d=$(mktemp -d)
+  (
+    BINARY_TAG="v9.9.9"; VERSION="v9.9.9-4-gdeadbee"
+    curl() { printf '%s\n' "$*" >> "$d/curl.log"; return 1; }
+    download_binary linux amd64 "$d/bin/disk-explorer"
+  ) >/dev/null 2>&1
+  grep -q "/releases/download/v9.9.9/disk-explorer-linux-amd64" "$d/curl.log"
+  rc=$?
+  rm -rf "$d"
+  return $rc
+}
+assert_true "_test_download_url" "download_binary: télécharge la release BINARY_TAG (pas VERSION)"
+
+assert_true '[[ "$CACHE_DIR" == "${HOME}/.cache/disk-explorer/bin/${BINARY_TAG}" ]]' \
+  "CACHE_DIR: indexé par BINARY_TAG"
+
+rm -rf "$_go_fake_cache" "$_go_empty_cache"
+
+echo -e "\nRunning tests for --version (Bash)..."
+
+assert_true '[[ "$(parse_args --version)" == "disk-explorer $VERSION" ]]' \
+  "parse_args --version: affiche VERSION et quitte"
+
+echo -e "\nRunning tests for build.sh version policy..."
+
+# _test_build_versions : dépôt git jetable ; vérifie VERSION / BINARY_TAG
+# injectés par build.sh hors dépôt, sans tag, sur un tag, après un tag.
+_test_build_versions() {
+  local root d rc
+  root="$(cd "$(dirname "$0")/.." && pwd)"
+  d=$(mktemp -d)
+  cp "$root/build.sh" "$d/" && cp -r "$root/src" "$d/" || { rm -rf "$d"; return 1; }
+  (
+    cd "$d" || exit 1
+    _g() { git -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false -c tag.gpgsign=false "$@" >/dev/null 2>&1; }
+    _v() { sed -n "s/^$1=\"\(.*\)\"\$/\1/p" disk-explorer.sh; }
+    _check() {  # _check VERSION_ATTENDUE BINARY_TAG_ATTENDU
+      ./build.sh >/dev/null 2>&1 || { echo "    build.sh a échoué"; return 1; }
+      [[ "$(_v VERSION)" == "$1" && "$(_v BINARY_TAG)" == "$2" ]] \
+        || { echo "    attendu: $1 / '$2' — obtenu: $(_v VERSION) / '$(_v BINARY_TAG)'"; return 1; }
+    }
+    _check "dev" "" || exit 1                       # hors dépôt git
+    _g init -q && _g add -A && _g commit -q -m c1 || exit 1
+    _check "$(git rev-parse --short HEAD)" "" || exit 1   # aucun tag : Bash seul
+    _g tag v1.2.3 || exit 1
+    _check "v1.2.3" "v1.2.3" || exit 1              # sur le tag
+    _g commit -q --allow-empty -m c2 && _g tag nightly || exit 1
+    _check "v1.2.3-1-g$(git rev-parse --short HEAD)" "v1.2.3" || exit 1  # après le tag ; tag hors release ignoré
+  )
+  rc=$?
+  rm -rf "$d"
+  return $rc
+}
+if command -v git >/dev/null 2>&1; then
+  assert_true "_test_build_versions" "build.sh: VERSION descriptive, BINARY_TAG = dernière release atteignable"
+else
+  echo "[SKIP] build.sh version policy (git absent)"
+fi
+
 echo -e "\nSummary: $total tests, $((total - failed)) passed, $failed failed."
 
 if [ $failed -ne 0 ]; then

@@ -13,6 +13,8 @@
 #
 # Options de scan propagées vers chaque cible :
 #   --mode, --sort, --top-count, --top-files, --max-depth
+#   (+ --bash : la cible exécute toujours l'implémentation Bash, voir
+#   remote_build_args)
 #
 # Options NON propagées :
 #   --exclude, --no-default-excludes  (chemins locaux sans sens à distance)
@@ -64,6 +66,33 @@ remote_validate_host() {
 }
 
 # ---------------------------------------------------------------------------
+# remote_build_args
+#   Remplit REMOTE_ARGS : arguments passés au script pipé sur chaque cible.
+#
+#   --bash en tête : sans lui, le script distant passerait par try_go_binary
+#   et pourrait exécuter le binaire Go de la cible (cache, réseau), dont la
+#   sortie et les codes de retour ne suivent pas le contrat lu par
+#   remote_run_all (rapport --summary Bash ; 0 = OK, 2 = scan partiel). Un
+#   binaire qui refuserait une option quitterait en 2, et un rapport vide
+#   serait compté « OK (partiel) ». Forcer le Bash rend le résultat identique
+#   sur toutes les cibles.
+# ---------------------------------------------------------------------------
+remote_build_args() {
+  REMOTE_ARGS=(
+    --bash
+    --path        "$REMOTE_PATH"
+    --summary
+    --no-color
+    --no-spinner
+    --mode        "$ANALYSIS_MODE"
+    --sort        "$SORT_MODE"
+    --top-count   "$TOP_COUNT"
+    --top-files   "$TOP_FILES_COUNT"
+    --max-depth   "$MAX_DEPTH"
+  )
+}
+
+# ---------------------------------------------------------------------------
 # remote_run_host HOST OUT_FILE ERR_FILE STATUS_FILE
 #   Streame le script courant via SSH sur HOST en mode --summary non interactif.
 #   Redirige stdout → OUT_FILE, stderr → ERR_FILE.
@@ -94,22 +123,11 @@ remote_run_host() {
   [[ -n "$port" ]] && ssh_opts+=(-p "$port")
   (( ${#REMOTE_SSH_OPTS[@]} > 0 )) && ssh_opts+=("${REMOTE_SSH_OPTS[@]}")
 
-  # Options de scan propagées vers la machine distante
-  local -a remote_args=(
-    --path        "$REMOTE_PATH"
-    --summary
-    --no-color
-    --no-spinner
-    --mode        "$ANALYSIS_MODE"
-    --sort        "$SORT_MODE"
-    --top-count   "$TOP_COUNT"
-    --top-files   "$TOP_FILES_COUNT"
-    --max-depth   "$MAX_DEPTH"
-  )
+  remote_build_args
 
   local remote_cmd="bash -s --"
   local arg
-  for arg in "${remote_args[@]}"; do
+  for arg in "${REMOTE_ARGS[@]}"; do
     remote_cmd+=" $(printf '%q' "$arg")"
   done
 
